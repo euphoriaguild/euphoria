@@ -108,7 +108,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Em produção: especifique o domínio
+    allow_origins=[
+        "https://euphoria-one-zeta.vercel.app",
+        "http://localhost:5173",  # desenvolvimento local
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
