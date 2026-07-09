@@ -25,6 +25,21 @@ logger = logging.getLogger(__name__)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
+DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID", "")
+
+
+async def is_in_discord_guild(discord_id: str) -> bool:
+    """Verifica se o usuário (pelo Discord ID) é membro do servidor da guilda."""
+    if not DISCORD_BOT_TOKEN or not DISCORD_GUILD_ID or not discord_id:
+        return True  # Se não configurado, permite acesso
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"https://discord.com/api/v10/guilds/{DISCORD_GUILD_ID}/members/{discord_id}",
+            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+            timeout=10,
+        )
+        return resp.status_code == 200
 
 
 def supabase_headers() -> dict:
@@ -281,6 +296,15 @@ async def save_profile(
     clerk_id = user.get("sub")
     if not clerk_id:
         raise HTTPException(status_code=401, detail="clerk_id ausente no token")
+
+    # Verifica se o Discord ID do usuário está no servidor da guilda
+    if body.discord_id:
+        in_guild = await is_in_discord_guild(body.discord_id)
+        if not in_guild:
+            raise HTTPException(
+                status_code=403,
+                detail="Você precisa ser membro do servidor Discord da Euphoria para se cadastrar."
+            )
 
     record = {
         "clerk_id": clerk_id,
