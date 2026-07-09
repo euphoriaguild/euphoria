@@ -127,8 +127,10 @@ export const api = {
 
 export interface RaffleHistoryEntry {
   id: number
-  item: string
-  winner: string
+  prize: string
+  winner_nick: string
+  winner_guild?: string
+  conducted_by?: string
   participants: string[]
   drawn_at: string
 }

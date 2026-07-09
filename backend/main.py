@@ -449,11 +449,27 @@ class RaffleEntry(BaseModel):
 @app.post("/api/raffle/save")
 async def save_raffle(body: RaffleEntry, _user: dict = Depends(require_auth)):
     """Salva um sorteio no histórico."""
+    clerk_id = _user.get("sub")
     async with httpx.AsyncClient() as client:
+        # Busca nick do staff que fez o sorteio
+        conducted_by = None
+        prof_resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            headers=supabase_headers(),
+            params={"clerk_id": f"eq.{clerk_id}", "select": "nick_mudomix", "limit": "1"},
+        )
+        if prof_resp.status_code == 200 and prof_resp.json():
+            conducted_by = prof_resp.json()[0].get("nick_mudomix")
+
         resp = await client.post(
             f"{SUPABASE_URL}/rest/v1/raffle_history",
             headers={**supabase_headers(), "Prefer": "return=representation"},
-            json={"item": body.item, "winner": body.winner, "participants": body.participants},
+            json={
+                "prize": body.item,
+                "winner_nick": body.winner,
+                "participants": body.participants,
+                "conducted_by": conducted_by,
+            },
         )
         if resp.status_code >= 400:
             raise HTTPException(status_code=500, detail=f"Erro ao salvar: {resp.text}")

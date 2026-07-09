@@ -375,9 +375,9 @@ export function Raffle() {
                         {new Date(h.drawn_at).toLocaleString('pt-BR')}
                       </td>
                       <td style={{ fontWeight: 500 }}>
-                        {h.item === '—' ? <em style={{ color: 'var(--text-muted)' }}>sem item</em> : h.item}
+                        {h.prize === '—' ? <em style={{ color: 'var(--text-muted)' }}>sem item</em> : h.prize}
                       </td>
-                      <td style={{ color: 'var(--accent)', fontWeight: 700 }}>{h.winner}</td>
+                      <td style={{ color: 'var(--accent)', fontWeight: 700 }}>{h.winner_nick}</td>
                       <td style={{ color: 'var(--text-muted)', fontSize: 12, maxWidth: 280 }}>{h.participants.join(', ')}</td>
                     </tr>
                   ))}
