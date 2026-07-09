@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, X, RefreshCw } from 'lucide-react'
+import { Check, X, RefreshCw, ShieldCheck } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { api, type PendingMember } from '../lib/api'
 
@@ -113,6 +113,19 @@ export function Requests() {
                 <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
                   <button
                     className="btn"
+                    onClick={() => approve(m.clerk_id, 'admin')}
+                    disabled={acting === m.clerk_id}
+                    style={{
+                      background: 'rgba(201,168,76,0.15)', color: 'var(--accent)',
+                      border: '1px solid rgba(201,168,76,0.3)', padding: '6px 12px', fontSize: 12,
+                      display: 'flex', alignItems: 'center', gap: 4,
+                    }}
+                    title="Aprovar como Admin"
+                  >
+                    <ShieldCheck size={13} /> Admin
+                  </button>
+                  <button
+                    className="btn"
                     onClick={() => approve(m.clerk_id, 'staff')}
                     disabled={acting === m.clerk_id}
                     style={{
@@ -134,7 +147,7 @@ export function Requests() {
                     }}
                     title="Aprovar como Membro"
                   >
-                    <Check size={13} /> Aprovar
+                    <Check size={13} /> Membro
                   </button>
                   <button
                     className="btn btn-danger"

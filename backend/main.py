@@ -482,8 +482,8 @@ async def get_pending_profiles(user: dict = Depends(require_auth)):
             f"{SUPABASE_URL}/rest/v1/profiles",
             headers=supabase_headers(),
             params={
-                "role": "eq.pending",
-                "select": "clerk_id,discord_username,avatar_url,nick_mudomix,guild,created_at",
+                "approved_at": "is.null",
+                "select": "clerk_id,discord_username,avatar_url,nick_mudomix,guild,role,created_at",
                 "order": "created_at.asc",
             },
         )
