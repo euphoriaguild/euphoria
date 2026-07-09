@@ -5,21 +5,10 @@
  */
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { useUser, useAuth as useClerkAuth } from '@clerk/clerk-react'
-import { supabase } from '../supabase'
-import { setClerkTokenGetter } from '../lib/api'
+import { api, setClerkTokenGetter, type ProfileData } from '../lib/api'
 
 export type UserRole = 'pending' | 'member' | 'staff' | 'admin' | 'rejected'
-
-export interface Profile {
-  clerk_id: string
-  discord_username: string | null   // username do Discord via Clerk
-  discord_id: string | null         // ID do Discord via Clerk
-  avatar_url: string | null
-  nick_mudomix: string | null
-  guild: string | null
-  role: UserRole
-  approved_at: string | null
-}
+export type Profile = ProfileData
 
 interface AuthContextValue {
   profile: Profile | null
@@ -45,12 +34,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function fetchProfile() {
     if (!user) { setProfile(null); setLoadingProfile(false); return }
     setLoadingProfile(true)
-    const { data } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('clerk_id', user.id)
-      .single()
-    setProfile(data as Profile | null)
+    try {
+      const data = await api.getMyProfile()
+      setProfile(data as Profile | null)
+    } catch {
+      setProfile(null)
+    }
     setLoadingProfile(false)
   }
 

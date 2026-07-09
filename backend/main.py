@@ -287,6 +287,22 @@ class ProfilePayload(BaseModel):
     avatar_url: Optional[str] = None
 
 
+@app.get("/api/profile/me")
+async def get_my_profile(user: dict = Depends(require_auth)):
+    """Retorna o perfil do usuário autenticado."""
+    clerk_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            headers=supabase_headers(),
+            params={"clerk_id": f"eq.{clerk_id}", "select": "*", "limit": "1"},
+        )
+        rows = resp.json()
+        if not rows:
+            raise HTTPException(status_code=404, detail="Perfil não encontrado")
+        return rows[0]
+
+
 @app.post("/api/profile")
 async def save_profile(
     body: ProfilePayload,

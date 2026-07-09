@@ -101,11 +101,23 @@ export const api = {
   refresh: () => apiFetch('/api/refresh', { method: 'POST' }),
 
   // Perfil / aprovação — passam pelo backend com Clerk JWT
+  getMyProfile: () => apiFetch<ProfileData>('/api/profile/me'),
   saveProfile: (data: { nick_mudomix: string; guild: string; discord_username?: string; discord_id?: string; avatar_url?: string }) =>
     apiFetch('/api/profile', { method: 'POST', body: JSON.stringify(data) }),
   getPendingMembers: () => apiFetch<PendingMember[]>('/api/profile/pending'),
   approveProfile: (clerk_id: string, role: string) =>
     apiFetch('/api/profile/approve', { method: 'POST', body: JSON.stringify({ clerk_id, role }) }),
+}
+
+export interface ProfileData {
+  clerk_id: string
+  discord_username: string | null
+  discord_id: string | null
+  avatar_url: string | null
+  nick_mudomix: string | null
+  guild: string | null
+  role: string
+  approved_at: string | null
 }
 
 export interface PendingMember {
