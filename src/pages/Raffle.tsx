@@ -42,20 +42,24 @@ export function Raffle() {
     if (!canvas || participants.length === 0) return
     const ctx = canvas.getContext('2d')!
     const size = canvas.width
-    const cx = size / 2, cy = size / 2, r = size / 2 - 4
+    const cx = size / 2, cy = size / 2, r = size / 2 - 6
 
     ctx.clearRect(0, 0, size, size)
     const slice = (Math.PI * 2) / participants.length
 
     participants.forEach((p, i) => {
       const startAngle = rot + i * slice
+      const color = participants.length <= 16
+        ? (i % 2 === 0 ? WHEEL_COLOR_A : WHEEL_COLOR_B)
+        : EXTRA_COLORS[i % EXTRA_COLORS.length]
+
       ctx.beginPath()
       ctx.moveTo(cx, cy)
       ctx.arc(cx, cy, r, startAngle, startAngle + slice)
       ctx.closePath()
-      ctx.fillStyle = COLORS[i % COLORS.length]
+      ctx.fillStyle = color
       ctx.fill()
-      ctx.strokeStyle = 'rgba(0,0,0,0.35)'
+      ctx.strokeStyle = 'rgba(0,0,0,0.4)'
       ctx.lineWidth = 1.5
       ctx.stroke()
 
@@ -64,28 +68,35 @@ export function Raffle() {
       ctx.rotate(startAngle + slice / 2)
       ctx.textAlign = 'right'
       ctx.fillStyle = '#fff'
-      ctx.font = `bold ${Math.max(9, Math.min(13, 180 / participants.length))}px Inter, sans-serif`
-      ctx.shadowColor = 'rgba(0,0,0,0.6)'
-      ctx.shadowBlur = 4
-      ctx.fillText(p.length > 14 ? p.slice(0, 13) + '…' : p, r - 10, 4)
+      const fontSize = Math.max(9, Math.min(14, 160 / participants.length))
+      ctx.font = `bold ${fontSize}px Inter, sans-serif`
+      ctx.shadowColor = 'rgba(0,0,0,0.7)'
+      ctx.shadowBlur = 3
+      ctx.fillText(p.length > 16 ? p.slice(0, 15) + '…' : p, r - 12, fontSize * 0.38)
       ctx.restore()
     })
 
-    // Anel externo
+    // Anel externo brilhante
     ctx.beginPath()
     ctx.arc(cx, cy, r, 0, Math.PI * 2)
-    ctx.strokeStyle = 'rgba(201,168,76,0.5)'
-    ctx.lineWidth = 3
+    ctx.strokeStyle = 'rgba(201,168,76,0.6)'
+    ctx.lineWidth = 4
     ctx.stroke()
 
-    // Centro
+    // Centro branco
     ctx.beginPath()
-    ctx.arc(cx, cy, 16, 0, Math.PI * 2)
-    ctx.fillStyle = '#0d1117'
+    ctx.arc(cx, cy, 22, 0, Math.PI * 2)
+    ctx.fillStyle = '#fff'
     ctx.fill()
     ctx.strokeStyle = '#c9a84c'
-    ctx.lineWidth = 2
+    ctx.lineWidth = 2.5
     ctx.stroke()
+
+    // Ponto central
+    ctx.beginPath()
+    ctx.arc(cx, cy, 7, 0, Math.PI * 2)
+    ctx.fillStyle = '#0d1117'
+    ctx.fill()
   }
 
   function addParticipant() {
