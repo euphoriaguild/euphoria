@@ -452,7 +452,7 @@ async def save_raffle(body: RaffleEntry, _user: dict = Depends(require_auth)):
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{SUPABASE_URL}/rest/v1/raffle_history",
-            headers=supabase_headers(),
+            headers={**supabase_headers(), "Prefer": "return=representation"},
             json={"item": body.item, "winner": body.winner, "participants": body.participants},
         )
         if resp.status_code >= 400:

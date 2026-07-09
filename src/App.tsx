@@ -14,7 +14,6 @@ import { Members }    from './pages/Members'
 import { Rankings }   from './pages/Rankings'
 import { Events }     from './pages/Events'
 import { WorldBoss }  from './pages/WorldBoss'
-import { Invasions }  from './pages/Invasions'
 import { Raffle }     from './pages/Raffle'
 import { Profile }    from './pages/Profile'
 import { GuildPage }  from './pages/GuildPage'
@@ -51,7 +50,6 @@ export default function App() {
           <Route path="/guilda/:name"    element={<Protected><GuildPage /></Protected>} />
           <Route path="/eventos"         element={<Protected><Events /></Protected>} />
           <Route path="/world-boss"      element={<Protected><WorldBoss /></Protected>} />
-          <Route path="/invasoes"        element={<Protected><Invasions /></Protected>} />
           <Route path="/sorteio"         element={<Protected><Raffle /></Protected>} />
           <Route path="/perfil"          element={<Protected><Profile /></Protected>} />
           <Route path="/perfil/:name"    element={<Protected><Profile /></Protected>} />

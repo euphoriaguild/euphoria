@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Trophy, Swords,
-  Dice5, Globe, Zap, User, Shield, ClipboardList, LogOut,
+  Dice5, Globe, User, Shield, ClipboardList, LogOut,
 } from 'lucide-react'
 import { useClerk, useUser } from '@clerk/clerk-react'
 import { useAuth } from '../contexts/AuthContext'
@@ -84,11 +84,6 @@ export function Sidebar() {
         <NavLink to="/world-boss" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
           <Globe />
           World Boss
-        </NavLink>
-
-        <NavLink to="/invasoes" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-          <Zap />
-          Invasões
         </NavLink>
 
         <span className="nav-section-title">Ferramentas</span>
