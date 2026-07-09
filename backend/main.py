@@ -63,18 +63,48 @@ _cache: dict = {
 CACHE_TTL_SECONDS = 300  # 5 minutos
 
 
+async def _build_guilds_from_rankings(rankings_data: list) -> list:
+    """Fallback: constrói dados de guilda a partir do ranking já scrapeado."""
+    guild_map: dict = {g: {"name": g, "master": "", "points": 0, "members": []} for g in ALLIANCE_GUILDS}
+    for r in rankings_data:
+        g = r.get("guild", "")
+        if g in guild_map:
+            guild_map[g]["members"].append({
+                "name": r["name"], "char_class": r["char_class"],
+                "resets": r["resets"], "level": 0,
+                "member_level": "Member", "guild": g,
+            })
+    return [
+        {"name": g, "master": m["master"], "points": m["points"],
+         "member_count": len(m["members"]), "members": m["members"]}
+        for g, m in guild_map.items() if m["members"]
+    ]
+
+
 async def refresh_cache():
     """Atualiza o cache com dados frescos."""
+    logger.info("Atualizando cache do ranking...")
+    rankings_data = await scrape_rankings("resets")
+    if rankings_data:
+        _cache["rankings"] = rankings_data
+        _cache["last_ranking_update"] = datetime.now(timezone.utc)
+
     logger.info("Atualizando cache das guildas...")
     guilds = await scrape_all_alliance_guilds()
+    guilds = [g for g in guilds if g]  # remove None
+
+    # Fallback: se scraping de guilda falhou/retornou vazio, usa o ranking
+    total_scraped = sum(len(g.get("members", [])) for g in guilds)
+    if total_scraped == 0 and _cache["rankings"]:
+        logger.warning("Scraping de guilda retornou vazio — usando ranking como fallback.")
+        guilds = await _build_guilds_from_rankings(_cache["rankings"])
+
     for g in guilds:
         _cache["guilds"][g["name"]] = g
 
-    total_members = sum(len(g["members"]) for g in guilds)
-    total_resets = sum(
-        m["resets"] for g in guilds for m in g["members"]
-    )
     all_members = [m for g in guilds for m in g["members"]]
+    total_members = len(all_members)
+    total_resets = sum(m["resets"] for m in all_members)
     top = max(all_members, key=lambda m: m["resets"]) if all_members else None
 
     _cache["alliance"] = {
@@ -82,14 +112,11 @@ async def refresh_cache():
         "total_members": total_members,
         "total_resets": total_resets,
         "top_reset": top,
+        "online_count": 0,
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }
     _cache["last_guild_update"] = datetime.now(timezone.utc)
-
-    logger.info("Atualizando cache do ranking...")
-    _cache["rankings"] = await scrape_rankings("resets")
-    _cache["last_ranking_update"] = datetime.now(timezone.utc)
-    logger.info("Cache atualizado com sucesso.")
+    logger.info(f"Cache atualizado — {total_members} membros, {len(_cache['rankings'])} no ranking.")
 
 
 @asynccontextmanager
@@ -346,6 +373,45 @@ async def save_profile(
 
     return {"ok": True}
 
+
+# ── Raffle ────────────────────────────────────────────────────
+
+@app.get("/api/raffle/history")
+async def get_raffle_history(_user: dict = Depends(require_auth)):
+    """Retorna os últimos 20 sorteios."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/raffle_history",
+            headers=supabase_headers(),
+            params={"order": "drawn_at.desc", "limit": "20"},
+        )
+        if resp.status_code >= 400:
+            return []
+    return resp.json()
+
+
+class RaffleEntry(BaseModel):
+    item: str
+    winner: str
+    participants: list[str]
+
+
+@app.post("/api/raffle/save")
+async def save_raffle(body: RaffleEntry, _user: dict = Depends(require_auth)):
+    """Salva um sorteio no histórico."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/raffle_history",
+            headers=supabase_headers(),
+            json={"item": body.item, "winner": body.winner, "participants": body.participants},
+        )
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=500, detail=f"Erro ao salvar: {resp.text}")
+    data = resp.json()
+    return data[0] if isinstance(data, list) and data else {"ok": True}
+
+
+# ── Profiles ───────────────────────────────────────────────────
 
 @app.get("/api/profile/pending")
 async def get_pending_profiles(user: dict = Depends(require_auth)):

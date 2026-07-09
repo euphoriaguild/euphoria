@@ -100,6 +100,11 @@ export const api = {
   getStats: () => apiFetch<AllianceStats>('/api/stats/alliance'),
   refresh: () => apiFetch('/api/refresh', { method: 'POST' }),
 
+  // Raffle
+  getRaffleHistory: () => apiFetch<RaffleHistoryEntry[]>('/api/raffle/history'),
+  saveRaffle: (item: string, winner: string, participants: string[]) =>
+    apiFetch<RaffleHistoryEntry>('/api/raffle/save', { method: 'POST', body: JSON.stringify({ item, winner, participants }) }),
+
   // Perfil / aprovação — passam pelo backend com Clerk JWT
   getMyProfile: () => apiFetch<ProfileData>('/api/profile/me'),
   saveProfile: (data: { nick_mudomix: string; guild: string; discord_username?: string; discord_id?: string; avatar_url?: string }) =>
@@ -107,6 +112,14 @@ export const api = {
   getPendingMembers: () => apiFetch<PendingMember[]>('/api/profile/pending'),
   approveProfile: (clerk_id: string, role: string) =>
     apiFetch('/api/profile/approve', { method: 'POST', body: JSON.stringify({ clerk_id, role }) }),
+}
+
+export interface RaffleHistoryEntry {
+  id: number
+  item: string
+  winner: string
+  participants: string[]
+  drawn_at: string
 }
 
 export interface ProfileData {

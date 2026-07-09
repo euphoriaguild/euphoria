@@ -28,17 +28,19 @@ export function Rankings() {
 
   useEffect(() => {
     setLoading(true)
-    const fn = allianceOnly ? api.getAllianceRankings : () => api.getRankings()
-    fn().then(data => {
+    api.getRankings().then(data => {
       setRankings(data)
       setLoading(false)
     }).catch(e => { console.error(e); setLoading(false) })
-  }, [allianceOnly])
+  }, [])
 
-  const filtered = rankings.filter(r =>
-    r.name.toLowerCase().includes(search.toLowerCase()) ||
-    (r.guild ?? '').toLowerCase().includes(search.toLowerCase())
-  )
+  const filtered = rankings.filter(r => {
+    const matchSearch =
+      r.name.toLowerCase().includes(search.toLowerCase()) ||
+      (r.guild ?? '').toLowerCase().includes(search.toLowerCase())
+    const matchAlliance = !allianceOnly || ALLIANCE_GUILDS.has(r.guild ?? '')
+    return matchSearch && matchAlliance
+  })
 
   return (
     <>
@@ -57,7 +59,7 @@ export function Rankings() {
               Global (Top 100)
             </button>
             <button className={`tab ${allianceOnly ? 'active' : ''}`} onClick={() => setAllianceOnly(true)}>
-              Apenas Euphoria
+              Apenas Aliança
             </button>
           </div>
 

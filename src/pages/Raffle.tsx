@@ -1,14 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { supabase } from '../supabase'
 import { X, Plus } from 'lucide-react'
-
-interface HistoryEntry {
-  id: number
-  item: string
-  winner: string
-  participants: string[]
-  drawn_at: string
-}
+import { api, type RaffleHistoryEntry } from '../lib/api'
 
 const COLORS = [
   '#e53e3e', '#dd6b20', '#d69e2e', '#38a169', '#2b6cb0',
@@ -22,18 +14,13 @@ export function Raffle() {
   const [spinning, setSpinning] = useState(false)
   const [winner, setWinner] = useState<string | null>(null)
   const [rotation, setRotation] = useState(0)
-  const [history, setHistory] = useState<HistoryEntry[]>([])
+  const [history, setHistory] = useState<RaffleHistoryEntry[]>([])
   const [removeWinner, setRemoveWinner] = useState(true)
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
-  // Carrega histórico do Supabase
+  // Carrega histórico via backend
   useEffect(() => {
-    supabase
-      .from('raffle_history')
-      .select('*')
-      .order('drawn_at', { ascending: false })
-      .limit(20)
-      .then(({ data }) => { if (data) setHistory(data as HistoryEntry[]) }, () => {}) // ignora se tabela não existe ainda
+    api.getRaffleHistory().then(data => setHistory(data)).catch(() => {})
   }, [])
 
   // Desenha a roleta no canvas
@@ -135,15 +122,13 @@ export function Raffle() {
           setParticipants(prev => prev.filter(p => p !== w))
         }
 
-        // Salva no histórico
+        // Salva no histórico via backend
         if (item.trim()) {
-          supabase.from('raffle_history').insert({
-            item: item.trim(),
-            winner: w,
-            participants: [...participants],
-          }).then(({ data }) => {
-            if (data) setHistory(prev => [data[0] as HistoryEntry, ...prev].slice(0, 20))
-          }, () => {})
+          api.saveRaffle(item.trim(), w, [...participants]).then(entry => {
+            if (entry && (entry as RaffleHistoryEntry).id) {
+              setHistory(prev => [entry as RaffleHistoryEntry, ...prev].slice(0, 20))
+            }
+          }).catch(() => {})
         }
       }
     }
@@ -157,7 +142,7 @@ export function Raffle() {
       </div>
 
       <div className="page-body">
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 20, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 1fr) 420px', gap: 24, alignItems: 'start' }}>
 
           {/* Painel esquerdo */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -257,22 +242,22 @@ export function Raffle() {
           </div>
 
           {/* Roleta + botão */}
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: '8px 0' }}>
             <div style={{ position: 'relative' }}>
               {/* Seta */}
               <div style={{
-                position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)',
+                position: 'absolute', top: -14, left: '50%', transform: 'translateX(-50%)',
                 width: 0, height: 0, zIndex: 10,
-                borderLeft: '10px solid transparent',
-                borderRight: '10px solid transparent',
-                borderTop: '20px solid var(--accent)',
+                borderLeft: '12px solid transparent',
+                borderRight: '12px solid transparent',
+                borderTop: '24px solid var(--accent)',
                 filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.5))',
               }} />
               <canvas
                 ref={canvasRef}
-                width={320}
-                height={320}
-                style={{ borderRadius: '50%', boxShadow: '0 0 30px rgba(201,168,76,0.2)' }}
+                width={380}
+                height={380}
+                style={{ borderRadius: '50%', boxShadow: '0 0 40px rgba(201,168,76,0.25)', display: 'block' }}
               />
               {participants.length === 0 && (
                 <div style={{
@@ -290,7 +275,7 @@ export function Raffle() {
               className="btn btn-primary"
               onClick={spin}
               disabled={spinning || participants.length < 2}
-              style={{ padding: '12px 36px', fontSize: 15, width: '100%',
+              style={{ padding: '13px 40px', fontSize: 16, width: '100%',
                 justifyContent: 'center', opacity: participants.length < 2 ? 0.5 : 1 }}
             >
               {spinning ? (
