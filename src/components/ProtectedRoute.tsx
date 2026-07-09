@@ -29,8 +29,8 @@ export function ProtectedRoute({ children, requireStaff = false }: Props) {
   // Não logado no Clerk
   if (!isSignedIn) return <Navigate to="/entrar" replace />
 
-  // Logado mas sem nick preenchido
-  if (profile && !profile.nick_mudomix) return <Navigate to="/configurar" replace />
+  // Logado mas sem perfil no banco ou sem nick preenchido → preencher cadastro
+  if (!profile || !profile.nick_mudomix) return <Navigate to="/configurar" replace />
 
   // Rejeitado pela staff
   if (profile?.role === 'rejected') {
