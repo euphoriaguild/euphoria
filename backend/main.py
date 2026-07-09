@@ -443,6 +443,213 @@ async def get_pending_profiles(user: dict = Depends(require_auth)):
     return resp.json()
 
 
+# ── World Boss ────────────────────────────────────────────────────────────────
+
+from zoneinfo import ZoneInfo
+
+BRASILIA = ZoneInfo("America/Sao_Paulo")
+
+# Escala semanal dos bosses (weekday: 0=Seg, 1=Ter, 2=Qua, 3=Qui, 4=Sex, 5=Sab, 6=Dom)
+BOSS_SCHEDULE: dict[int, str | None] = {
+    0: "Phoenix",
+    1: "Hell Maine",
+    2: "Phoenix",
+    3: "Kayn",
+    4: None,          # Sexta — day off
+    5: "Hydra",
+    6: "Zaikan",
+}
+
+BOSS_IMAGES: dict[str, str] = {
+    "Phoenix":   "🔥",
+    "Hell Maine": "🔮",
+    "Kayn":      "⚔️",
+    "Hydra":     "🐍",
+    "Zaikan":    "💀",
+}
+
+
+def get_brasilia_now() -> datetime:
+    return datetime.now(BRASILIA)
+
+
+def today_boss() -> dict:
+    """Retorna informações do boss do dia atual (horário de Brasília)."""
+    now_br = get_brasilia_now()
+    boss_name = BOSS_SCHEDULE.get(now_br.weekday())
+
+    boss_date = now_br.date().isoformat()
+    event_time = now_br.replace(hour=20, minute=30, second=0, microsecond=0).isoformat()
+
+    # Check-in abre a meia-noite do dia do boss e fecha às 20:30
+    checkin_open = boss_name is not None and (
+        now_br.hour < 20 or (now_br.hour == 20 and now_br.minute < 30)
+    )
+
+    return {
+        "boss_name": boss_name,
+        "boss_date": boss_date,
+        "emoji": BOSS_IMAGES.get(boss_name, "👾") if boss_name else None,
+        "event_time": event_time,
+        "checkin_open": checkin_open,
+        "weekday": now_br.weekday(),
+    }
+
+
+@app.get("/api/worldboss/today")
+async def get_worldboss_today(_user: dict = Depends(require_auth)):
+    """Retorna informações do boss do dia atual."""
+    return today_boss()
+
+
+@app.post("/api/worldboss/checkin")
+async def worldboss_checkin(user: dict = Depends(require_auth)):
+    """Registra check-in do usuário para o boss de hoje."""
+    info = today_boss()
+    if not info["boss_name"]:
+        raise HTTPException(status_code=400, detail="Hoje é dia de descanso (sexta-feira).")
+    if not info["checkin_open"]:
+        raise HTTPException(status_code=400, detail="Check-in encerrado para hoje.")
+
+    clerk_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        # Busca perfil do usuário
+        profile_resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            headers=supabase_headers(),
+            params={"clerk_id": f"eq.{clerk_id}", "select": "nick_mudomix,guild,role"},
+        )
+        rows = profile_resp.json()
+        if not rows:
+            raise HTTPException(status_code=404, detail="Perfil não encontrado.")
+        profile = rows[0]
+        if profile.get("role") not in ("member", "staff", "admin"):
+            raise HTTPException(status_code=403, detail="Perfil ainda não aprovado.")
+
+        # Insere check-in (UPSERT para evitar duplicata)
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/world_boss_checkins",
+            headers={**supabase_headers(), "Prefer": "resolution=ignore-duplicates,return=representation"},
+            json={
+                "clerk_id": clerk_id,
+                "nick_mudomix": profile["nick_mudomix"],
+                "guild": profile.get("guild"),
+                "boss_date": info["boss_date"],
+                "boss_name": info["boss_name"],
+            },
+        )
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=500, detail=resp.text)
+        data = resp.json()
+        already_exists = len(data) == 0
+    return {"ok": True, "already_checked_in": already_exists}
+
+
+@app.delete("/api/worldboss/checkin")
+async def worldboss_cancel_checkin(user: dict = Depends(require_auth)):
+    """Cancela check-in do usuário para o boss de hoje."""
+    info = today_boss()
+    if not info["checkin_open"]:
+        raise HTTPException(status_code=400, detail="Check-in encerrado.")
+
+    clerk_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        resp = await client.delete(
+            f"{SUPABASE_URL}/rest/v1/world_boss_checkins",
+            headers=supabase_headers(),
+            params={
+                "clerk_id": f"eq.{clerk_id}",
+                "boss_date": f"eq.{info['boss_date']}",
+            },
+        )
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=500, detail=resp.text)
+    return {"ok": True}
+
+
+@app.get("/api/worldboss/checkins")
+async def get_worldboss_checkins(
+    date: Optional[str] = None,
+    _user: dict = Depends(require_auth),
+):
+    """Retorna todos os check-ins de uma data (padrão: hoje)."""
+    if not date:
+        date = get_brasilia_now().date().isoformat()
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/world_boss_checkins",
+            headers=supabase_headers(),
+            params={
+                "boss_date": f"eq.{date}",
+                "select": "id,nick_mudomix,guild,boss_name,created_at",
+                "order": "created_at.asc",
+            },
+        )
+        if resp.status_code >= 400:
+            return []
+    return resp.json()
+
+
+class PartiesPayload(BaseModel):
+    parties: list[dict]  # [{name: "PT1", members: ["player1", ...]}, ...]
+
+
+@app.put("/api/worldboss/parties")
+async def save_worldboss_parties(body: PartiesPayload, user: dict = Depends(require_auth)):
+    """Admin salva as partys do boss do dia."""
+    clerk_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        check = await client.get(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            headers=supabase_headers(),
+            params={"clerk_id": f"eq.{clerk_id}", "select": "role"},
+        )
+        rows = check.json()
+        if not rows or rows[0].get("role") not in ("staff", "admin"):
+            raise HTTPException(status_code=403, detail="Acesso restrito a staff/admin.")
+
+        info = today_boss()
+        record = {
+            "boss_date": info["boss_date"],
+            "boss_name": info["boss_name"] or "off",
+            "parties": body.parties,
+            "updated_by": clerk_id,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/world_boss_parties",
+            headers={**supabase_headers(), "Prefer": "resolution=merge-duplicates,return=representation"},
+            json=record,
+        )
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=500, detail=resp.text)
+    return {"ok": True}
+
+
+@app.get("/api/worldboss/parties")
+async def get_worldboss_parties(
+    date: Optional[str] = None,
+    _user: dict = Depends(require_auth),
+):
+    """Retorna as partys configuradas para uma data (padrão: hoje)."""
+    if not date:
+        date = get_brasilia_now().date().isoformat()
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/world_boss_parties",
+            headers=supabase_headers(),
+            params={"boss_date": f"eq.{date}", "select": "parties,boss_name,updated_at"},
+        )
+        if resp.status_code >= 400:
+            return {"parties": [], "boss_name": None}
+        data = resp.json()
+    if data:
+        return data[0]
+    return {"parties": [], "boss_name": None}
+
+
+# ── Profiles ─────────────────────────────────────────────────────────────────
+
 class ApprovePayload(BaseModel):
     clerk_id: str
     role: str  # "member" | "staff" | "admin" | "rejected"

@@ -105,6 +105,17 @@ export const api = {
   saveRaffle: (item: string, winner: string, participants: string[]) =>
     apiFetch<RaffleHistoryEntry>('/api/raffle/save', { method: 'POST', body: JSON.stringify({ item, winner, participants }) }),
 
+  // World Boss
+  getWorldBossToday: () => apiFetch<WorldBossToday>('/api/worldboss/today'),
+  worldBossCheckin: () => apiFetch<{ ok: boolean; already_checked_in: boolean }>('/api/worldboss/checkin', { method: 'POST' }),
+  worldBossCancelCheckin: () => apiFetch('/api/worldboss/checkin', { method: 'DELETE' }),
+  getWorldBossCheckins: (date?: string) =>
+    apiFetch<WorldBossCheckin[]>(`/api/worldboss/checkins${date ? `?date=${date}` : ''}`),
+  getWorldBossParties: (date?: string) =>
+    apiFetch<WorldBossPartiesData>(`/api/worldboss/parties${date ? `?date=${date}` : ''}`),
+  saveWorldBossParties: (parties: WorldBossParty[]) =>
+    apiFetch('/api/worldboss/parties', { method: 'PUT', body: JSON.stringify({ parties }) }),
+
   // Perfil / aprovação — passam pelo backend com Clerk JWT
   getMyProfile: () => apiFetch<ProfileData>('/api/profile/me'),
   saveProfile: (data: { nick_mudomix: string; guild: string; discord_username?: string; discord_id?: string; avatar_url?: string }) =>
@@ -120,6 +131,34 @@ export interface RaffleHistoryEntry {
   winner: string
   participants: string[]
   drawn_at: string
+}
+
+export interface WorldBossToday {
+  boss_name: string | null
+  boss_date: string
+  emoji: string | null
+  event_time: string
+  checkin_open: boolean
+  weekday: number
+}
+
+export interface WorldBossCheckin {
+  id: number
+  nick_mudomix: string
+  guild: string | null
+  boss_name: string
+  created_at: string
+}
+
+export interface WorldBossParty {
+  name: string
+  members: string[]
+}
+
+export interface WorldBossPartiesData {
+  parties: WorldBossParty[]
+  boss_name: string | null
+  updated_at?: string
 }
 
 export interface ProfileData {
