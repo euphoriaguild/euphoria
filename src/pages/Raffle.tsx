@@ -3,8 +3,9 @@ import { X, Plus } from 'lucide-react'
 import { api, type RaffleHistoryEntry } from '../lib/api'
 
 const COLORS = [
-  '#e53e3e', '#dd6b20', '#d69e2e', '#38a169', '#2b6cb0',
-  '#6b46c1', '#b83280', '#2c7a7b', '#744210', '#2d3748',
+  '#e53e3e', '#ed8936', '#ecc94b', '#48bb78', '#38b2ac',
+  '#4299e1', '#667eea', '#b794f4', '#ed64a6', '#fc8181',
+  '#f6ad55', '#68d391', '#76e4f7', '#90cdf4', '#d6bcfa',
 ]
 
 export function Raffle() {
@@ -15,12 +16,15 @@ export function Raffle() {
   const [winner, setWinner] = useState<string | null>(null)
   const [rotation, setRotation] = useState(0)
   const [history, setHistory] = useState<RaffleHistoryEntry[]>([])
+  const [historyLoading, setHistoryLoading] = useState(true)
   const [removeWinner, setRemoveWinner] = useState(true)
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
-  // Carrega histórico via backend
   useEffect(() => {
-    api.getRaffleHistory().then(data => setHistory(data)).catch(() => {})
+    api.getRaffleHistory()
+      .then(data => setHistory(data))
+      .catch(() => {})
+      .finally(() => setHistoryLoading(false))
   }, [])
 
   // Desenha a roleta no canvas
@@ -46,26 +50,32 @@ export function Raffle() {
       ctx.closePath()
       ctx.fillStyle = COLORS[i % COLORS.length]
       ctx.fill()
-      ctx.strokeStyle = '#111'
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)'
       ctx.lineWidth = 1.5
       ctx.stroke()
 
-      // Texto
       ctx.save()
       ctx.translate(cx, cy)
       ctx.rotate(startAngle + slice / 2)
       ctx.textAlign = 'right'
       ctx.fillStyle = '#fff'
-      ctx.font = `bold ${Math.max(10, Math.min(14, 200 / participants.length))}px Inter`
-      ctx.shadowColor = '#000'
-      ctx.shadowBlur = 3
-      ctx.fillText(p.length > 12 ? p.slice(0, 11) + '…' : p, r - 8, 4)
+      ctx.font = `bold ${Math.max(9, Math.min(13, 180 / participants.length))}px Inter, sans-serif`
+      ctx.shadowColor = 'rgba(0,0,0,0.6)'
+      ctx.shadowBlur = 4
+      ctx.fillText(p.length > 14 ? p.slice(0, 13) + '…' : p, r - 10, 4)
       ctx.restore()
     })
 
+    // Anel externo
+    ctx.beginPath()
+    ctx.arc(cx, cy, r, 0, Math.PI * 2)
+    ctx.strokeStyle = 'rgba(201,168,76,0.5)'
+    ctx.lineWidth = 3
+    ctx.stroke()
+
     // Centro
     ctx.beginPath()
-    ctx.arc(cx, cy, 18, 0, Math.PI * 2)
+    ctx.arc(cx, cy, 16, 0, Math.PI * 2)
     ctx.fillStyle = '#0d1117'
     ctx.fill()
     ctx.strokeStyle = '#c9a84c'
@@ -118,18 +128,13 @@ export function Raffle() {
         const w = participants[winnerIdx]
         setWinner(w)
 
-        if (removeWinner) {
-          setParticipants(prev => prev.filter(p => p !== w))
-        }
+        if (removeWinner) setParticipants(prev => prev.filter(p => p !== w))
 
-        // Salva no histórico via backend
-        if (item.trim()) {
-          api.saveRaffle(item.trim(), w, [...participants]).then(entry => {
-            if (entry && (entry as RaffleHistoryEntry).id) {
-              setHistory(prev => [entry as RaffleHistoryEntry, ...prev].slice(0, 20))
-            }
-          }).catch(() => {})
-        }
+        // Salva sempre (mesmo sem item) e recarrega histórico
+        api.saveRaffle(item.trim() || '—', w, [...participants])
+          .then(() => api.getRaffleHistory())
+          .then(data => setHistory(data))
+          .catch(() => {})
       }
     }
     requestAnimationFrame(animate)
@@ -142,12 +147,16 @@ export function Raffle() {
       </div>
 
       <div className="page-body">
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 1fr) 420px', gap: 24, alignItems: 'start' }}>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>
+          Monte a roleta com nomes livres ou nicks dos membros, informe o item sorteado e gire para registrar o resultado no histórico.
+        </p>
 
-          {/* Painel esquerdo */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {/* Item sorteado */}
-            <div className="card">
+        {/* Grid: roleta (esquerda) | painel (direita) */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 28, alignItems: 'start' }}>
+
+          {/* ── Coluna esquerda: item + roleta + botão ── */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+            <div style={{ width: '100%' }}>
               <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
                 textTransform: 'uppercase', letterSpacing: 1, display: 'block', marginBottom: 6 }}>
                 Item sorteado
@@ -155,31 +164,74 @@ export function Raffle() {
               <input
                 value={item}
                 onChange={e => setItem(e.target.value)}
-                placeholder="Ex: Jewel of Chaos +15"
+                placeholder="Ex: Great Dragon Gloves +13"
                 style={{
                   width: '100%', padding: '9px 12px', background: 'var(--bg-700)',
                   border: '1px solid var(--border)', borderRadius: 6,
                   color: 'var(--text-primary)', fontSize: 13, outline: 'none',
+                  boxSizing: 'border-box',
                 }}
               />
             </div>
 
-            {/* Participantes */}
+            <div style={{ position: 'relative' }}>
+              <div style={{
+                position: 'absolute', top: -15, left: '50%', transform: 'translateX(-50%)',
+                width: 0, height: 0, zIndex: 10,
+                borderLeft: '12px solid transparent', borderRight: '12px solid transparent',
+                borderTop: '22px solid var(--accent)',
+                filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.6))',
+              }} />
+              <canvas
+                ref={canvasRef}
+                width={360}
+                height={360}
+                style={{ borderRadius: '50%', boxShadow: '0 0 40px rgba(201,168,76,0.2)',
+                  display: 'block', background: 'var(--bg-700)' }}
+              />
+              {participants.length === 0 && (
+                <div style={{
+                  position: 'absolute', inset: 0, display: 'flex',
+                  alignItems: 'center', justifyContent: 'center',
+                  background: 'var(--bg-700)', borderRadius: '50%',
+                  fontSize: 13, color: 'var(--text-muted)', textAlign: 'center',
+                  padding: 24, pointerEvents: 'none',
+                }}>
+                  Adicione<br />participantes
+                </div>
+              )}
+            </div>
+
+            <button
+              className="btn btn-primary"
+              onClick={spin}
+              disabled={spinning || participants.length < 2}
+              style={{ padding: '12px 0', fontSize: 15, width: 360,
+                justifyContent: 'center', opacity: participants.length < 2 ? 0.45 : 1 }}
+            >
+              {spinning
+                ? <><div className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} /> Sorteando…</>
+                : 'Girar'}
+            </button>
+          </div>
+
+          {/* ── Coluna direita: participantes + resultado ── */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div className="card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)',
                   textTransform: 'uppercase', letterSpacing: 1 }}>
                   Participantes ({participants.length})
                 </span>
                 {participants.length > 0 && (
-                  <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: 11 }}
+                  <button className="btn btn-ghost" style={{ padding: '3px 8px', fontSize: 11 }}
                     onClick={() => { setParticipants([]); setWinner(null) }}>
-                    Limpar
+                    Limpar tudo
                   </button>
                 )}
               </div>
 
-              <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
                 <input
                   value={inputName}
                   onChange={e => setInputName(e.target.value)}
@@ -191,134 +243,98 @@ export function Raffle() {
                     color: 'var(--text-primary)', fontSize: 13, outline: 'none',
                   }}
                 />
-                <button className="btn btn-primary" onClick={addParticipant} style={{ padding: '8px 12px' }}>
-                  <Plus size={14} />
+                <button className="btn btn-primary" onClick={addParticipant} style={{ padding: '8px 13px' }}>
+                  <Plus size={15} />
                 </button>
               </div>
 
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {participants.map((p, i) => (
-                  <span key={p} style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 4,
-                    padding: '4px 10px', borderRadius: 20, fontSize: 12, fontWeight: 500,
-                    background: COLORS[i % COLORS.length] + '25',
-                    border: `1px solid ${COLORS[i % COLORS.length]}55`,
-                    color: 'var(--text-primary)',
-                  }}>
-                    {p}
-                    <button onClick={() => removeParticipant(p)}
-                      style={{ background: 'none', border: 'none', color: 'inherit',
-                        cursor: 'pointer', display: 'flex', padding: 0, opacity: 0.7 }}>
-                      <X size={12} />
-                    </button>
-                  </span>
-                ))}
-              </div>
+              {participants.length > 0 ? (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+                  {participants.map((p, i) => (
+                    <span key={p} style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 5,
+                      padding: '4px 10px', borderRadius: 20, fontSize: 12, fontWeight: 500,
+                      background: COLORS[i % COLORS.length] + '28',
+                      border: `1px solid ${COLORS[i % COLORS.length]}60`,
+                      color: 'var(--text-primary)',
+                    }}>
+                      {p}
+                      <button onClick={() => removeParticipant(p)} style={{
+                        background: 'none', border: 'none', color: 'inherit',
+                        cursor: 'pointer', display: 'flex', padding: 0, opacity: 0.6 }}>
+                        <X size={11} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>
+                  Nenhum participante adicionado.
+                </div>
+              )}
 
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12,
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8,
                 fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                <input type="checkbox" checked={removeWinner}
+                <input type="checkbox" checked={removeWinner} style={{ marginTop: 2 }}
                   onChange={e => setRemoveWinner(e.target.checked)} />
-                Remover vencedor da roleta após sorteio
+                <span>
+                  Remover ganhador da roleta após sorteio.
+                  <span style={{ color: 'var(--text-muted)', display: 'block' }}>
+                    Quando ativo, o ganhador sai da lista após o sorteio.
+                  </span>
+                </span>
               </label>
             </div>
 
-            {/* Resultado */}
             {winner && (
               <div className="card" style={{
                 textAlign: 'center', borderColor: 'var(--border-accent)',
                 background: 'rgba(201,168,76,0.06)',
               }}>
-                <div style={{ fontSize: 32, marginBottom: 8 }}>🎉</div>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700,
-                  color: 'var(--accent)' }}>
+                <div style={{ fontSize: 36, marginBottom: 6 }}>🎉</div>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 700,
+                  color: 'var(--accent)', marginBottom: 4 }}>
                   {winner}
                 </div>
-                {item && <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
-                  ganhou {item}
-                </div>}
+                <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                  ganhou {item.trim() || 'o sorteio'}!
+                </div>
               </div>
             )}
           </div>
-
-          {/* Roleta + botão */}
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: '8px 0' }}>
-            <div style={{ position: 'relative' }}>
-              {/* Seta */}
-              <div style={{
-                position: 'absolute', top: -14, left: '50%', transform: 'translateX(-50%)',
-                width: 0, height: 0, zIndex: 10,
-                borderLeft: '12px solid transparent',
-                borderRight: '12px solid transparent',
-                borderTop: '24px solid var(--accent)',
-                filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.5))',
-              }} />
-              <canvas
-                ref={canvasRef}
-                width={380}
-                height={380}
-                style={{ borderRadius: '50%', boxShadow: '0 0 40px rgba(201,168,76,0.25)', display: 'block' }}
-              />
-              {participants.length === 0 && (
-                <div style={{
-                  position: 'absolute', inset: 0, display: 'flex',
-                  alignItems: 'center', justifyContent: 'center',
-                  background: 'var(--bg-700)', borderRadius: '50%',
-                  fontSize: 13, color: 'var(--text-muted)', textAlign: 'center', padding: 20,
-                }}>
-                  Adicione<br />participantes
-                </div>
-              )}
-            </div>
-
-            <button
-              className="btn btn-primary"
-              onClick={spin}
-              disabled={spinning || participants.length < 2}
-              style={{ padding: '13px 40px', fontSize: 16, width: '100%',
-                justifyContent: 'center', opacity: participants.length < 2 ? 0.5 : 1 }}
-            >
-              {spinning ? (
-                <><div className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} /> Sorteando...</>
-              ) : 'Girar'}
-            </button>
-          </div>
         </div>
 
-        {/* Histórico */}
-        {history.length > 0 && (
-          <div className="card" style={{ marginTop: 20 }}>
-            <div className="card-header">
-              <span className="card-title">Histórico de sorteios</span>
-            </div>
+        {/* ── Histórico (sempre visível) ── */}
+        <div className="card" style={{ marginTop: 28 }}>
+          <div className="card-header">
+            <span className="card-title">Histórico de sorteios</span>
+          </div>
+          {historyLoading ? (
+            <div className="loading" style={{ padding: '20px 0' }}><div className="spinner" /> Carregando...</div>
+          ) : history.length === 0 ? (
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', padding: '12px 0' }}>Nenhum sorteio registrado ainda.</p>
+          ) : (
             <div className="table-wrap">
               <table>
-                <thead>
-                  <tr>
-                    <th>Data</th>
-                    <th>Item</th>
-                    <th>Vencedor</th>
-                    <th>Participantes</th>
-                  </tr>
-                </thead>
+                <thead><tr><th>Data</th><th>Item</th><th>Vencedor</th><th>Participantes</th></tr></thead>
                 <tbody>
                   {history.map(h => (
                     <tr key={h.id}>
-                      <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                      <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', fontSize: 12 }}>
                         {new Date(h.drawn_at).toLocaleString('pt-BR')}
                       </td>
-                      <td>{h.item}</td>
-                      <td style={{ color: 'var(--accent)', fontWeight: 600 }}>{h.winner}</td>
-                      <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-                        {h.participants.join(', ')}
+                      <td style={{ fontWeight: 500 }}>
+                        {h.item === '—' ? <em style={{ color: 'var(--text-muted)' }}>sem item</em> : h.item}
                       </td>
+                      <td style={{ color: 'var(--accent)', fontWeight: 700 }}>{h.winner}</td>
+                      <td style={{ color: 'var(--text-muted)', fontSize: 12, maxWidth: 280 }}>{h.participants.join(', ')}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </>
   )
