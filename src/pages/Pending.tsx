@@ -1,17 +1,24 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useClerk } from '@clerk/clerk-react'
 import { useAuth } from '../contexts/AuthContext'
 
 export function Pending() {
-  const { profile, refreshProfile } = useAuth()
+  const { profile, refreshProfile, isApproved } = useAuth()
   const { signOut } = useClerk()
+  const navigate = useNavigate()
   const [checking, setChecking] = useState(false)
 
-  // Faz polling a cada 30s para verificar se foi aprovado
+  // Quando aprovado, redireciona para o dashboard automaticamente
+  useEffect(() => {
+    if (isApproved) navigate('/', { replace: true })
+  }, [isApproved, navigate])
+
+  // Faz polling a cada 15s para verificar se foi aprovado
   useEffect(() => {
     const id = setInterval(async () => {
       await refreshProfile()
-    }, 30_000)
+    }, 15_000)
     return () => clearInterval(id)
   }, [refreshProfile])
 
@@ -72,7 +79,7 @@ export function Pending() {
           </div>
 
           <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 20 }}>
-            Verificação automática a cada 30 segundos.
+            Verificação automática a cada 15 segundos.
           </p>
         </div>
       </div>
