@@ -372,7 +372,7 @@ export function Raffle() {
                   {history.map(h => (
                     <tr key={h.id}>
                       <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', fontSize: 12 }}>
-                        {new Date(h.drawn_at).toLocaleString('pt-BR')}
+                        {new Date(h.created_at).toLocaleString('pt-BR')}
                       </td>
                       <td style={{ fontWeight: 500 }}>
                         {h.prize === '—' ? <em style={{ color: 'var(--text-muted)' }}>sem item</em> : h.prize}

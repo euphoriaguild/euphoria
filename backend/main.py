@@ -433,7 +433,7 @@ async def get_raffle_history(_user: dict = Depends(require_auth)):
         resp = await client.get(
             f"{SUPABASE_URL}/rest/v1/raffle_history",
             headers=supabase_headers(),
-            params={"order": "drawn_at.desc", "limit": "20"},
+            params={"order": "created_at.desc", "limit": "20"},
         )
         if resp.status_code >= 400:
             return []
@@ -468,6 +468,7 @@ async def save_raffle(body: RaffleEntry, _user: dict = Depends(require_auth)):
                 "prize": body.item,
                 "winner_nick": body.winner,
                 "conducted_by": conducted_by,
+                "participants": body.participants,
             },
         )
         if resp.status_code >= 400:

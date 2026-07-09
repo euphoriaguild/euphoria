@@ -132,7 +132,7 @@ export interface RaffleHistoryEntry {
   winner_guild?: string
   conducted_by?: string
   participants: string[]
-  drawn_at: string
+  created_at: string
 }
 
 export interface WorldBossToday {
