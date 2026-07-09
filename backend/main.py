@@ -467,7 +467,6 @@ async def save_raffle(body: RaffleEntry, _user: dict = Depends(require_auth)):
             json={
                 "prize": body.item,
                 "winner_nick": body.winner,
-                "participants": body.participants,
                 "conducted_by": conducted_by,
             },
         )
