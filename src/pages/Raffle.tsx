@@ -2,10 +2,15 @@ import { useState, useEffect, useRef } from 'react'
 import { X, Plus } from 'lucide-react'
 import { api, type RaffleHistoryEntry } from '../lib/api'
 
-const COLORS = [
-  '#e53e3e', '#ed8936', '#ecc94b', '#48bb78', '#38b2ac',
-  '#4299e1', '#667eea', '#b794f4', '#ed64a6', '#fc8181',
-  '#f6ad55', '#68d391', '#76e4f7', '#90cdf4', '#d6bcfa',
+// Duas cores alternadas = estilo sorteio.com
+const WHEEL_COLOR_A = '#c9a84c' // ouro
+const WHEEL_COLOR_B = '#1e3a60' // azul escuro
+// Extra cores para quando tem muitos participantes
+const EXTRA_COLORS = [
+  '#c9a84c', '#1e3a60', '#b8932a', '#2a4f80',
+  '#daa84c', '#163060', '#c99a2a', '#1e4a70',
+  '#e0b84c', '#0e2a50', '#c98a1a', '#243a70',
+  '#d4a03c', '#1a3458', '#b87a20', '#2e4a80',
 ]
 
 export function Raffle() {
@@ -147,26 +152,46 @@ export function Raffle() {
       </div>
 
       <div className="page-body">
-        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>
-          Monte a roleta com nomes livres ou nicks dos membros, informe o item sorteado e gire para registrar o resultado no histórico.
-        </p>
+        {/* Layout principal: painel esquerdo | roleta direita */}
+        <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 20, alignItems: 'start' }}>
 
-        {/* Grid: roleta (esquerda) | painel (direita) */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 28, alignItems: 'start' }}>
+          {/* ── Painel esquerdo (como sorteio.com) ── */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
 
-          {/* ── Coluna esquerda: item + roleta + botão ── */}
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-            <div style={{ width: '100%' }}>
-              <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
-                textTransform: 'uppercase', letterSpacing: 1, display: 'block', marginBottom: 6 }}>
-                Item sorteado
+            {/* Opções */}
+            <div className="card" style={{ borderRadius: '8px 8px 0 0', borderBottom: 'none' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)',
+                textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12, display: 'flex',
+                alignItems: 'center', gap: 6 }}>
+                ⚙️ Opções
+              </div>
+
+              <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                fontSize: 13, color: 'var(--text-secondary)', cursor: 'pointer', marginBottom: 10 }}>
+                Remover ganhador
+                <div
+                  onClick={() => setRemoveWinner(v => !v)}
+                  style={{
+                    width: 38, height: 22, borderRadius: 11, cursor: 'pointer', transition: 'background 0.2s',
+                    background: removeWinner ? 'var(--accent)' : 'var(--bg-600)',
+                    border: '1px solid var(--border)', position: 'relative',
+                  }}
+                >
+                  <div style={{
+                    position: 'absolute', top: 3, left: removeWinner ? 18 : 3,
+                    width: 14, height: 14, borderRadius: '50%', background: '#fff',
+                    transition: 'left 0.2s',
+                  }} />
+                </div>
               </label>
+
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>Item sorteado</div>
               <input
                 value={item}
                 onChange={e => setItem(e.target.value)}
                 placeholder="Ex: Great Dragon Gloves +13"
                 style={{
-                  width: '100%', padding: '9px 12px', background: 'var(--bg-700)',
+                  width: '100%', padding: '8px 10px', background: 'var(--bg-700)',
                   border: '1px solid var(--border)', borderRadius: 6,
                   color: 'var(--text-primary)', fontSize: 13, outline: 'none',
                   boxSizing: 'border-box',
@@ -174,145 +199,160 @@ export function Raffle() {
               />
             </div>
 
+            {/* Entradas */}
+            <div className="card" style={{ borderRadius: '0 0 8px 8px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)',
+                  textTransform: 'uppercase', letterSpacing: 1 }}>
+                  🎁 Entradas {participants.length > 0 && (
+                    <span style={{ background: 'var(--accent)', color: '#000', borderRadius: 10,
+                      padding: '1px 7px', fontSize: 11 }}>{participants.length}</span>
+                  )}
+                </span>
+                {participants.length > 0 && (
+                  <button className="btn btn-ghost" style={{ padding: '2px 8px', fontSize: 11 }}
+                    onClick={() => { setParticipants([]); setWinner(null) }}>
+                    Limpar
+                  </button>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+                <input
+                  value={inputName}
+                  onChange={e => setInputName(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && addParticipant()}
+                  placeholder="Insira os itens para a roleta..."
+                  style={{
+                    flex: 1, padding: '8px 10px', background: 'var(--bg-700)',
+                    border: '1px solid var(--border)', borderRadius: 6,
+                    color: 'var(--text-primary)', fontSize: 12, outline: 'none',
+                  }}
+                />
+                <button className="btn btn-primary" onClick={addParticipant}
+                  style={{ padding: '8px 11px', flexShrink: 0 }}>
+                  <Plus size={14} />
+                </button>
+              </div>
+
+              {/* Lista de chips */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6,
+                maxHeight: 220, overflowY: 'auto' }}>
+                {participants.length === 0 ? (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Nenhum participante.</div>
+                ) : participants.map((p, i) => {
+                  const color = i % 2 === 0 ? WHEEL_COLOR_A : WHEEL_COLOR_B
+                  return (
+                    <span key={p} style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                      padding: '3px 8px', borderRadius: 6, fontSize: 12, fontWeight: 500,
+                      background: color + '22', border: `1px solid ${color}55`,
+                      color: 'var(--text-primary)',
+                    }}>
+                      {p}
+                      <button onClick={() => removeParticipant(p)} style={{
+                        background: 'none', border: 'none', color: 'inherit',
+                        cursor: 'pointer', display: 'flex', padding: 0, opacity: 0.55 }}>
+                        <X size={10} />
+                      </button>
+                    </span>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Resultado */}
+            {winner && (
+              <div className="card" style={{
+                marginTop: 12, textAlign: 'center',
+                borderColor: 'var(--border-accent)', background: 'rgba(201,168,76,0.06)',
+              }}>
+                <div style={{ fontSize: 30, marginBottom: 4 }}>🎉</div>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700,
+                  color: 'var(--accent)', marginBottom: 3 }}>{winner}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  ganhou {item.trim() || 'o sorteio'}!
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── Painel direito: roleta grande (estilo sorteio.com) ── */}
+          <div style={{
+            background: 'var(--bg-800)', border: '1px solid var(--border)',
+            borderRadius: 12, padding: '32px 24px 24px',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20,
+          }}>
+            {/* Roleta */}
             <div style={{ position: 'relative' }}>
-              <div style={{
-                position: 'absolute', top: -15, left: '50%', transform: 'translateX(-50%)',
-                width: 0, height: 0, zIndex: 10,
-                borderLeft: '12px solid transparent', borderRight: '12px solid transparent',
-                borderTop: '22px solid var(--accent)',
-                filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.6))',
-              }} />
+              {/* Ponteiro estilo sorteio.com (teardrop/pino) */}
+              <svg
+                width="36" height="50"
+                viewBox="0 0 36 50"
+                style={{
+                  position: 'absolute', top: -46, left: '50%',
+                  transform: 'translateX(-50%)', zIndex: 10,
+                  filter: 'drop-shadow(0 3px 6px rgba(0,0,0,0.5))',
+                }}
+              >
+                <circle cx="18" cy="16" r="15" fill="#c9631a" />
+                <polygon points="5,24 31,24 18,50" fill="#c9631a" />
+                <circle cx="18" cy="16" r="6" fill="rgba(255,255,255,0.25)" />
+              </svg>
+
               <canvas
                 ref={canvasRef}
-                width={360}
-                height={360}
-                style={{ borderRadius: '50%', boxShadow: '0 0 40px rgba(201,168,76,0.2)',
-                  display: 'block', background: 'var(--bg-700)' }}
+                width={420}
+                height={420}
+                style={{
+                  borderRadius: '50%',
+                  boxShadow: '0 0 50px rgba(201,168,76,0.15), 0 4px 24px rgba(0,0,0,0.6)',
+                  display: 'block',
+                  background: 'var(--bg-700)',
+                }}
               />
+
               {participants.length === 0 && (
                 <div style={{
                   position: 'absolute', inset: 0, display: 'flex',
                   alignItems: 'center', justifyContent: 'center',
                   background: 'var(--bg-700)', borderRadius: '50%',
-                  fontSize: 13, color: 'var(--text-muted)', textAlign: 'center',
-                  padding: 24, pointerEvents: 'none',
+                  fontSize: 13, color: 'var(--text-muted)',
+                  textAlign: 'center', padding: 30, pointerEvents: 'none',
                 }}>
                   Adicione<br />participantes
                 </div>
               )}
             </div>
 
+            {/* Botão Girar (largura total como no sorteio.com) */}
             <button
               className="btn btn-primary"
               onClick={spin}
               disabled={spinning || participants.length < 2}
-              style={{ padding: '12px 0', fontSize: 15, width: 360,
-                justifyContent: 'center', opacity: participants.length < 2 ? 0.45 : 1 }}
+              style={{
+                padding: '14px 0', fontSize: 16, width: '100%',
+                justifyContent: 'center', borderRadius: 8,
+                opacity: participants.length < 2 ? 0.45 : 1,
+                letterSpacing: 0.5,
+              }}
             >
               {spinning
-                ? <><div className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} /> Sorteando…</>
-                : 'Girar'}
+                ? <><div className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} /> Sorteando…</>
+                : 'Girar Roleta ›'}
             </button>
-          </div>
-
-          {/* ── Coluna direita: participantes + resultado ── */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div className="card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)',
-                  textTransform: 'uppercase', letterSpacing: 1 }}>
-                  Participantes ({participants.length})
-                </span>
-                {participants.length > 0 && (
-                  <button className="btn btn-ghost" style={{ padding: '3px 8px', fontSize: 11 }}
-                    onClick={() => { setParticipants([]); setWinner(null) }}>
-                    Limpar tudo
-                  </button>
-                )}
-              </div>
-
-              <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-                <input
-                  value={inputName}
-                  onChange={e => setInputName(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && addParticipant()}
-                  placeholder="Adicionar nome..."
-                  style={{
-                    flex: 1, padding: '8px 12px', background: 'var(--bg-700)',
-                    border: '1px solid var(--border)', borderRadius: 6,
-                    color: 'var(--text-primary)', fontSize: 13, outline: 'none',
-                  }}
-                />
-                <button className="btn btn-primary" onClick={addParticipant} style={{ padding: '8px 13px' }}>
-                  <Plus size={15} />
-                </button>
-              </div>
-
-              {participants.length > 0 ? (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
-                  {participants.map((p, i) => (
-                    <span key={p} style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 5,
-                      padding: '4px 10px', borderRadius: 20, fontSize: 12, fontWeight: 500,
-                      background: COLORS[i % COLORS.length] + '28',
-                      border: `1px solid ${COLORS[i % COLORS.length]}60`,
-                      color: 'var(--text-primary)',
-                    }}>
-                      {p}
-                      <button onClick={() => removeParticipant(p)} style={{
-                        background: 'none', border: 'none', color: 'inherit',
-                        cursor: 'pointer', display: 'flex', padding: 0, opacity: 0.6 }}>
-                        <X size={11} />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>
-                  Nenhum participante adicionado.
-                </div>
-              )}
-
-              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8,
-                fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                <input type="checkbox" checked={removeWinner} style={{ marginTop: 2 }}
-                  onChange={e => setRemoveWinner(e.target.checked)} />
-                <span>
-                  Remover ganhador da roleta após sorteio.
-                  <span style={{ color: 'var(--text-muted)', display: 'block' }}>
-                    Quando ativo, o ganhador sai da lista após o sorteio.
-                  </span>
-                </span>
-              </label>
-            </div>
-
-            {winner && (
-              <div className="card" style={{
-                textAlign: 'center', borderColor: 'var(--border-accent)',
-                background: 'rgba(201,168,76,0.06)',
-              }}>
-                <div style={{ fontSize: 36, marginBottom: 6 }}>🎉</div>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 700,
-                  color: 'var(--accent)', marginBottom: 4 }}>
-                  {winner}
-                </div>
-                <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                  ganhou {item.trim() || 'o sorteio'}!
-                </div>
-              </div>
-            )}
           </div>
         </div>
 
-        {/* ── Histórico (sempre visível) ── */}
-        <div className="card" style={{ marginTop: 28 }}>
+        {/* ── Histórico ── */}
+        <div className="card" style={{ marginTop: 24 }}>
           <div className="card-header">
             <span className="card-title">Histórico de sorteios</span>
           </div>
           {historyLoading ? (
-            <div className="loading" style={{ padding: '20px 0' }}><div className="spinner" /> Carregando...</div>
+            <div className="loading" style={{ padding: '16px 0' }}><div className="spinner" /> Carregando...</div>
           ) : history.length === 0 ? (
-            <p style={{ fontSize: 13, color: 'var(--text-muted)', padding: '12px 0' }}>Nenhum sorteio registrado ainda.</p>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', padding: '10px 0' }}>Nenhum sorteio registrado ainda.</p>
           ) : (
             <div className="table-wrap">
               <table>
