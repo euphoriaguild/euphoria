@@ -117,22 +117,23 @@ export function Raffle() {
     setWinner(null)
     setSpinning(true)
 
-    const extraSpins = 5 + Math.floor(Math.random() * 5)
+    const extraSpins = 8 + Math.floor(Math.random() * 5)
     const winnerIdx = Math.floor(Math.random() * participants.length)
     const slice = (Math.PI * 2) / participants.length
-    // A "seta" aponta para cima (−π/2), então vencedor fica lá
-    const targetRot = -Math.PI / 2 - (winnerIdx * slice + slice / 2) + Math.PI * 2 * extraSpins
+    // Posição aleatória dentro da fatia (entre 15% e 85% da fatia, evitando bordas)
+    const randomOffset = slice * (0.15 + Math.random() * 0.70)
+    const targetRot = -Math.PI / 2 - (winnerIdx * slice + randomOffset) + Math.PI * 2 * extraSpins
 
     let start: number | null = null
-    const duration = 4000 + Math.random() * 2000
+    const duration = 7000 + Math.random() * 3000
     const startRot = rotation
 
     function animate(ts: number) {
       if (!start) start = ts
       const elapsed = ts - start
       const progress = Math.min(elapsed / duration, 1)
-      // Ease out cubic
-      const eased = 1 - Math.pow(1 - progress, 3)
+      // Ease out quint — desacelera mais suavemente
+      const eased = 1 - Math.pow(1 - progress, 5)
       const current = startRot + (targetRot - startRot) * eased
       setRotation(current)
       drawWheel(current)
