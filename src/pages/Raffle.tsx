@@ -23,6 +23,7 @@ export function Raffle() {
   const [history, setHistory] = useState<RaffleHistoryEntry[]>([])
   const [historyLoading, setHistoryLoading] = useState(true)
   const [removeWinner, setRemoveWinner] = useState(true)
+  const [spinDuration, setSpinDuration] = useState(5)
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -122,11 +123,18 @@ export function Raffle() {
     const slice = (Math.PI * 2) / participants.length
     // Posição aleatória dentro da fatia (entre 15% e 85%, evitando bordas)
     const randomOffset = slice * (0.15 + Math.random() * 0.70)
-    const targetRot = -Math.PI / 2 - (winnerIdx * slice + randomOffset) + Math.PI * 2 * extraSpins
+    const startRot = rotation
+    // targetRot sempre relativo ao startRot para evitar spin lento em sorteios consecutivos
+    const TAU = Math.PI * 2
+    const targetAngle = -Math.PI / 2 - (winnerIdx * slice + randomOffset)
+    const currentNorm = ((startRot % TAU) + TAU) % TAU
+    const targetNorm = ((targetAngle % TAU) + TAU) % TAU
+    let diff = targetNorm - currentNorm
+    if (diff < 0) diff += TAU
+    const targetRot = startRot + diff + TAU * extraSpins
 
     let start: number | null = null
-    const duration = 5500 + Math.random() * 1500   // 5.5–7 segundos
-    const startRot = rotation
+    const duration = spinDuration * 1000
 
     // Ease-out quart: começa rápido, desacelera de forma natural como uma roleta real
     function easeOutQuart(t: number): number {
@@ -200,6 +208,22 @@ export function Raffle() {
                   }} />
                 </div>
               </label>
+
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Duração do giro</div>
+              <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+                {[5, 10, 15].map(s => (
+                  <button key={s} onClick={() => setSpinDuration(s)}
+                    style={{
+                      padding: '4px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                      border: `1px solid ${spinDuration === s ? 'var(--accent)' : 'var(--border)'}`,
+                      background: spinDuration === s ? 'var(--accent)' : 'var(--bg-700)',
+                      color: spinDuration === s ? '#000' : 'var(--text-secondary)',
+                      cursor: 'pointer',
+                    }}>
+                    {s}s
+                  </button>
+                ))}
+              </div>
 
               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>Item sorteado</div>
               <input
