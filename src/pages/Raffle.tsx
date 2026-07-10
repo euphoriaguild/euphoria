@@ -117,7 +117,7 @@ export function Raffle() {
     setWinner(null)
     setSpinning(true)
 
-    const extraSpins = 8 + Math.floor(Math.random() * 5)
+    const extraSpins = 8 + Math.floor(Math.random() * 4)
     const winnerIdx = Math.floor(Math.random() * participants.length)
     const slice = (Math.PI * 2) / participants.length
     // Posição aleatória dentro da fatia (entre 15% e 85% da fatia, evitando bordas)
@@ -125,15 +125,27 @@ export function Raffle() {
     const targetRot = -Math.PI / 2 - (winnerIdx * slice + randomOffset) + Math.PI * 2 * extraSpins
 
     let start: number | null = null
-    const duration = 7000 + Math.random() * 3000
+    const duration = 8000 + Math.random() * 2000
     const startRot = rotation
+
+    // Easing customizado: velocidade constante nos primeiros 65% do tempo (mostra todos os participantes),
+    // depois desacelera suavemente nos últimos 35%
+    function customEase(t: number): number {
+      const split = 0.65
+      const rotAtSplit = 0.78
+      if (t <= split) {
+        return (t / split) * rotAtSplit
+      } else {
+        const t2 = (t - split) / (1 - split)
+        return rotAtSplit + (1 - rotAtSplit) * (1 - Math.pow(1 - t2, 3))
+      }
+    }
 
     function animate(ts: number) {
       if (!start) start = ts
       const elapsed = ts - start
       const progress = Math.min(elapsed / duration, 1)
-      // Ease out quint — desacelera mais suavemente
-      const eased = 1 - Math.pow(1 - progress, 5)
+      const eased = customEase(progress)
       const current = startRot + (targetRot - startRot) * eased
       setRotation(current)
       drawWheel(current)
