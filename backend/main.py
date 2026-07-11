@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import asyncio
@@ -119,59 +119,8 @@ async def refresh_cache():
     logger.info(f"Cache atualizado — {total_members} membros, {len(_cache['rankings'])} no ranking.")
 
 
-async def ensure_tables():
-    """Cria as tabelas necessárias se não existirem (DDL via pg_meta)."""
-    tables_sql = [
-        """CREATE TABLE IF NOT EXISTS world_boss_checkins (
-            id           BIGSERIAL PRIMARY KEY,
-            clerk_id     TEXT NOT NULL,
-            nick_mudomix TEXT NOT NULL,
-            guild        TEXT,
-            boss_date    DATE NOT NULL,
-            boss_name    TEXT NOT NULL,
-            created_at   TIMESTAMPTZ DEFAULT NOW(),
-            UNIQUE (clerk_id, boss_date)
-        )""",
-        """CREATE TABLE IF NOT EXISTS world_boss_parties (
-            id          BIGSERIAL PRIMARY KEY,
-            boss_date   DATE NOT NULL UNIQUE,
-            boss_name   TEXT NOT NULL,
-            parties     JSONB NOT NULL DEFAULT '[]',
-            updated_by  TEXT,
-            updated_at  TIMESTAMPTZ DEFAULT NOW()
-        )""",
-        """CREATE TABLE IF NOT EXISTS raffle_history (
-            id           BIGSERIAL PRIMARY KEY,
-            item         TEXT NOT NULL,
-            winner       TEXT NOT NULL,
-            participants TEXT[] NOT NULL DEFAULT '{}',
-            drawn_at     TIMESTAMPTZ DEFAULT NOW()
-        )""",
-    ]
-    async with httpx.AsyncClient() as client:
-        for sql in tables_sql:
-            try:
-                resp = await client.post(
-                    f"{SUPABASE_URL}/pg_meta/v1/query",
-                    headers={
-                        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-                        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-                        "Content-Type": "application/json",
-                    },
-                    json={"query": sql},
-                    timeout=15,
-                )
-                if resp.status_code < 300:
-                    logger.info(f"Tabela verificada/criada OK (status {resp.status_code})")
-                else:
-                    logger.warning(f"pg_meta retornou {resp.status_code}: {resp.text[:200]}")
-            except Exception as e:
-                logger.warning(f"Não foi possível criar tabela via pg_meta: {e}")
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await ensure_tables()
     await refresh_cache()
     yield
 
