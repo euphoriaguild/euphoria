@@ -23,7 +23,13 @@ ALLIANCE_GUILDS = ["Euphoria", "Euphor1a", "Jackson5", "HellBoyz"]
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "pt-BR,pt;q=0.9",
+    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Cache-Control": "no-cache",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Upgrade-Insecure-Requests": "1",
 }
 
 SUPABASE_HEADERS = {
@@ -38,9 +44,10 @@ async def fetch(url: str) -> BeautifulSoup | None:
     try:
         async with httpx.AsyncClient(headers=HEADERS, timeout=20, follow_redirects=True) as client:
             r = await client.get(url)
+            logger.info(f"HTTP {r.status_code}: {url}")
             if r.status_code == 200:
                 return BeautifulSoup(r.text, "lxml")
-            logger.warning(f"HTTP {r.status_code}: {url}")
+            logger.warning(f"Bloqueado ({r.status_code}): {url}")
     except Exception as e:
         logger.warning(f"Erro ao buscar {url}: {e}")
     return None
@@ -50,19 +57,28 @@ async def scrape_rankings() -> list:
     soup = await fetch(f"{BASE_URL}/rankings/resets")
     if not soup:
         return []
-    rows = soup.select("table tbody tr")
-    results = []
-    for row in rows:
-        cells = row.find_all("td")
-        if len(cells) >= 4:
-            results.append({
-                "name": cells[1].get_text(strip=True) if len(cells) > 1 else "",
-                "char_class": cells[2].get_text(strip=True) if len(cells) > 2 else "",
-                "resets": int(cells[3].get_text(strip=True)) if len(cells) > 3 and cells[3].get_text(strip=True).isdigit() else 0,
-                "guild": cells[4].get_text(strip=True) if len(cells) > 4 else "",
-                "level": int(cells[5].get_text(strip=True)) if len(cells) > 5 and cells[5].get_text(strip=True).isdigit() else 0,
-            })
-    return results
+    rankings = []
+    try:
+        for table in soup.select("table"):
+            rows = table.find_all("tr")[1:]
+            for row in rows:
+                cells = row.find_all("td")
+                if len(cells) >= 4:
+                    name = cells[1].get_text(strip=True) if len(cells) > 1 else ""
+                    if name:
+                        rankings.append({
+                            "name": name,
+                            "char_class": cells[2].get_text(strip=True) if len(cells) > 2 else "",
+                            "resets": int(cells[3].get_text(strip=True)) if len(cells) > 3 and cells[3].get_text(strip=True).isdigit() else 0,
+                            "guild": cells[4].get_text(strip=True) if len(cells) > 4 else "",
+                            "level": int(cells[5].get_text(strip=True)) if len(cells) > 5 and cells[5].get_text(strip=True).isdigit() else 0,
+                        })
+            if rankings:
+                break
+    except Exception as e:
+        logger.warning(f"Erro ao parsear rankings: {e}")
+    logger.info(f"Rankings encontrados: {len(rankings)}")
+    return rankings
 
 
 async def scrape_guild(name: str) -> dict | None:
@@ -70,29 +86,37 @@ async def scrape_guild(name: str) -> dict | None:
     if not soup:
         return None
     try:
-        guild_info: dict = {"name": name, "master": "", "points": 0, "members": []}
+        guild_info: dict = {"name": name, "master": "", "points": 0}
         for row in soup.select("table tr"):
             cells = row.find_all("td")
             if len(cells) == 2:
                 k = cells[0].get_text(strip=True).lower()
                 v = cells[1].get_text(strip=True)
-                if "mestre" in k:
-                    guild_info["master"] = v
-                elif "pontuação" in k or "pontuacao" in k:
-                    guild_info["points"] = int(v) if v.isdigit() else 0
+                if "mestre" in k:                          guild_info["master"] = v
+                elif "pontuação" in k or "pontuacao" in k: guild_info["points"] = int(v) if v.isdigit() else 0
 
-        for row in soup.select("table tbody tr"):
-            cells = row.find_all("td")
-            if len(cells) >= 2:
-                guild_info["members"].append({
-                    "name": cells[0].get_text(strip=True),
-                    "char_class": cells[1].get_text(strip=True) if len(cells) > 1 else "",
-                    "resets": int(cells[2].get_text(strip=True)) if len(cells) > 2 and cells[2].get_text(strip=True).isdigit() else 0,
-                    "level": int(cells[3].get_text(strip=True)) if len(cells) > 3 and cells[3].get_text(strip=True).isdigit() else 0,
-                    "member_level": cells[4].get_text(strip=True) if len(cells) > 4 else "Member",
-                    "guild": name,
-                })
-        guild_info["member_count"] = len(guild_info["members"])
+        members = []
+        for table in soup.select("table"):
+            headers = [th.get_text(strip=True).lower() for th in table.find_all("th")]
+            if "personagem" in headers or "classe" in headers:
+                for row in table.find_all("tr")[1:]:
+                    cells = row.find_all("td")
+                    if len(cells) >= 4:
+                        n = cells[0].get_text(strip=True)
+                        if n:
+                            members.append({
+                                "name": n,
+                                "char_class": cells[1].get_text(strip=True),
+                                "resets": int(cells[2].get_text(strip=True)) if cells[2].get_text(strip=True).isdigit() else 0,
+                                "level": int(cells[3].get_text(strip=True)) if cells[3].get_text(strip=True).isdigit() else 0,
+                                "member_level": cells[4].get_text(strip=True) if len(cells) > 4 else "Member",
+                                "guild": name,
+                            })
+                break
+
+        guild_info["members"] = members
+        guild_info["member_count"] = len(members)
+        logger.info(f"Guilda {name}: {len(members)} membros")
         return guild_info
     except Exception as e:
         logger.warning(f"Erro ao parsear guilda {name}: {e}")
