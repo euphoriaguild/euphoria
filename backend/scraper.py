@@ -1,36 +1,42 @@
-import httpx
 import asyncio
+import cloudscraper
 from bs4 import BeautifulSoup
 from typing import Optional
 import re
 import logging
+from functools import partial
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://mudomix.com"
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/126.0.0.0 Safari/537.36"
-    ),
-    "Accept-Language": "pt-BR,pt;q=0.9",
-}
 
 # As guildas da aliança
 ALLIANCE_GUILDS = ["Euphoria", "Euphor1a", "Jackson5", "HellBoyz"]
 
 
-async def fetch_page(url: str) -> Optional[BeautifulSoup]:
-    """Busca uma página e retorna o objeto BeautifulSoup."""
+def _fetch_sync(url: str) -> Optional[str]:
+    """Busca uma página usando cloudscraper (bypass Cloudflare). Síncrono."""
     try:
-        async with httpx.AsyncClient(headers=HEADERS, timeout=15.0, follow_redirects=True) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            return BeautifulSoup(resp.text, "lxml")
+        scraper = cloudscraper.create_scraper(
+            browser={"browser": "chrome", "platform": "windows", "mobile": False}
+        )
+        resp = scraper.get(url, timeout=20)
+        if resp.status_code == 200:
+            return resp.text
+        logger.warning(f"HTTP {resp.status_code} ao buscar {url}")
+        return None
     except Exception as e:
         logger.warning(f"Erro ao buscar {url}: {e}")
         return None
+
+
+async def fetch_page(url: str) -> Optional[BeautifulSoup]:
+    """Busca uma página de forma assíncrona via cloudscraper."""
+    loop = asyncio.get_event_loop()
+    html = await loop.run_in_executor(None, partial(_fetch_sync, url))
+    if html:
+        return BeautifulSoup(html, "lxml")
+    return None
 
 
 async def scrape_guild(guild_name: str) -> Optional[dict]:
