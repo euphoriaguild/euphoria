@@ -1,0 +1,25 @@
+name: Scrape MU Domix → Supabase
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'   # a cada 30 minutos
+  workflow_dispatch:           # trigger manual pelo GitHub UI
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependências
+        run: pip install httpx beautifulsoup4 lxml
+
+      - name: Executar scraper
+        run: python scripts/scrape_to_supabase.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

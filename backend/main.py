@@ -10,13 +10,7 @@ import httpx
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
-from scraper import (
-    scrape_guild,
-    scrape_character,
-    scrape_rankings,
-    scrape_all_alliance_guilds,
-    ALLIANCE_GUILDS,
-)
+from scraper import scrape_character, ALLIANCE_GUILDS
 from auth import require_auth, get_current_user
 
 load_dotenv()
@@ -82,41 +76,53 @@ async def _build_guilds_from_rankings(rankings_data: list) -> list:
 
 
 async def refresh_cache():
-    """Atualiza o cache com dados frescos."""
-    logger.info("Atualizando cache do ranking...")
-    rankings_data = await scrape_rankings("resets")
-    if rankings_data:
-        _cache["rankings"] = rankings_data
-        _cache["last_ranking_update"] = datetime.now(timezone.utc)
+    """Lê dados do Supabase data_cache (populado pelo GitHub Actions scraper)."""
+    logger.info("Carregando cache do Supabase...")
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{SUPABASE_URL}/rest/v1/data_cache",
+                headers=supabase_headers(),
+                params={"select": "key,data,updated_at"},
+            )
+            if r.status_code != 200:
+                logger.warning(f"data_cache retornou {r.status_code}")
+                return
 
-    logger.info("Atualizando cache das guildas...")
-    guilds = await scrape_all_alliance_guilds()
-    guilds = [g for g in guilds if g]  # remove None
+            rows = r.json()
+            guilds_dict: dict = {}
+            for row in rows:
+                key = row["key"]
+                data = row["data"]
+                if key == "rankings" and isinstance(data, list):
+                    _cache["rankings"] = data
+                    _cache["last_ranking_update"] = datetime.now(timezone.utc)
+                elif key.startswith("guild_") and isinstance(data, dict):
+                    guild_name = key[len("guild_"):]
+                    guilds_dict[guild_name] = data
 
-    # Fallback: se scraping de guilda falhou/retornou vazio, usa o ranking
-    total_scraped = sum(len(g.get("members", [])) for g in guilds)
-    if total_scraped == 0 and _cache["rankings"]:
-        logger.warning("Scraping de guilda retornou vazio — usando ranking como fallback.")
-        guilds = await _build_guilds_from_rankings(_cache["rankings"])
+            if guilds_dict:
+                _cache["guilds"] = guilds_dict
+                _cache["last_guild_update"] = datetime.now(timezone.utc)
 
-    for g in guilds:
-        _cache["guilds"][g["name"]] = g
+            # Reconstrói alliance a partir dos dados carregados
+            all_guilds = list(guilds_dict.values())
+            all_members = [m for g in all_guilds for m in g.get("members", [])]
+            total_members = len(all_members)
+            total_resets = sum(m.get("resets", 0) for m in all_members)
+            top = max(all_members, key=lambda m: m.get("resets", 0)) if all_members else None
 
-    all_members = [m for g in guilds for m in g["members"]]
-    total_members = len(all_members)
-    total_resets = sum(m["resets"] for m in all_members)
-    top = max(all_members, key=lambda m: m["resets"]) if all_members else None
-
-    _cache["alliance"] = {
-        "guilds": guilds,
-        "total_members": total_members,
-        "total_resets": total_resets,
-        "top_reset": top,
-        "online_count": 0,
-        "last_updated": datetime.now(timezone.utc).isoformat(),
-    }
-    _cache["last_guild_update"] = datetime.now(timezone.utc)
-    logger.info(f"Cache atualizado — {total_members} membros, {len(_cache['rankings'])} no ranking.")
+            _cache["alliance"] = {
+                "guilds": all_guilds,
+                "total_members": total_members,
+                "total_resets": total_resets,
+                "top_reset": top,
+                "online_count": 0,
+                "last_updated": datetime.now(timezone.utc).isoformat(),
+            }
+            logger.info(f"Cache carregado — {total_members} membros, {len(_cache['rankings'])} no ranking.")
+    except Exception as e:
+        logger.error(f"Erro ao carregar cache do Supabase: {e}")
 
 
 @asynccontextmanager
