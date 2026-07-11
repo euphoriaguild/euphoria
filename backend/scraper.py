@@ -1,5 +1,5 @@
 import asyncio
-from curl_cffi.requests import AsyncSession
+import httpx
 from bs4 import BeautifulSoup
 from typing import Optional
 import re
@@ -8,22 +8,27 @@ import logging
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://mudomix.com"
+# Proxy via Vercel (IPs diferentes do Render, não bloqueados pelo Cloudflare)
+PROXY_BASE = "https://euphoria-one-zeta.vercel.app/api/mu-proxy"
 
 # As guildas da aliança
 ALLIANCE_GUILDS = ["Euphoria", "Euphor1a", "Jackson5", "HellBoyz"]
 
 
 async def fetch_page(url: str) -> Optional[BeautifulSoup]:
-    """Busca uma página usando curl_cffi (impersona Chrome no nível TLS)."""
+    """Busca uma página via proxy Vercel para evitar bloqueio Cloudflare."""
+    # Extrai o path após mudomix.com
+    path = url.replace(BASE_URL, "")
+    proxy_url = f"{PROXY_BASE}?path={path}"
     try:
-        async with AsyncSession(impersonate="chrome120") as session:
-            resp = await session.get(url, timeout=20)
+        async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
+            resp = await client.get(proxy_url)
             if resp.status_code == 200:
                 return BeautifulSoup(resp.text, "lxml")
-            logger.warning(f"HTTP {resp.status_code} ao buscar {url}")
+            logger.warning(f"Proxy retornou HTTP {resp.status_code} para {url}")
             return None
     except Exception as e:
-        logger.warning(f"Erro ao buscar {url}: {e}")
+        logger.warning(f"Erro ao buscar {url} via proxy: {e}")
         return None
 
 
