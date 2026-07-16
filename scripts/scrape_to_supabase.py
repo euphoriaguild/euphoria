@@ -6,6 +6,7 @@ O backend lê diretamente do Supabase em vez de fazer scraping direto.
 import asyncio
 import httpx
 from bs4 import BeautifulSoup
+from playwright.async_api import async_playwright
 import json
 import os
 import re
@@ -20,18 +21,6 @@ SUPABASE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 BASE_URL = "https://mudomix.com"
 ALLIANCE_GUILDS = ["Euphoria", "Euphor1a", "Jackson5", "HellBoyz"]
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Cache-Control": "no-cache",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Upgrade-Insecure-Requests": "1",
-}
-
 SUPABASE_HEADERS = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -39,15 +28,35 @@ SUPABASE_HEADERS = {
     "Prefer": "resolution=merge-duplicates,return=minimal",
 }
 
+_pw = None
+_browser = None
+_ctx = None
+
+
+async def get_context():
+    global _pw, _browser, _ctx
+    if _ctx is None:
+        _pw = await async_playwright().start()
+        _browser = await _pw.chromium.launch(headless=True)
+        _ctx = await _browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            locale="pt-BR",
+        )
+    return _ctx
+
 
 async def fetch(url: str) -> BeautifulSoup | None:
     try:
-        async with httpx.AsyncClient(headers=HEADERS, timeout=20, follow_redirects=True) as client:
-            r = await client.get(url)
-            logger.info(f"HTTP {r.status_code}: {url}")
-            if r.status_code == 200:
-                return BeautifulSoup(r.text, "lxml")
-            logger.warning(f"Bloqueado ({r.status_code}): {url}")
+        ctx = await get_context()
+        page = await ctx.new_page()
+        resp = await page.goto(url, wait_until="networkidle", timeout=30000)
+        status = resp.status if resp else 0
+        logger.info(f"HTTP {status}: {url}")
+        html = await page.content()
+        await page.close()
+        if status == 200:
+            return BeautifulSoup(html, "lxml")
+        logger.warning(f"Bloqueado ({status}): {url}")
     except Exception as e:
         logger.warning(f"Erro ao buscar {url}: {e}")
     return None
