@@ -45,90 +45,66 @@ def supabase_headers() -> dict:
         "Prefer": "return=representation",
     }
 
-# Cache em memória (substitua por Redis/Supabase em produção)
-_cache: dict = {
-    "guilds": {},
-    "rankings": [],
-    "alliance": None,
-    "last_guild_update": None,
-    "last_ranking_update": None,
-}
+# ── Helpers de dados de perfis ───────────────────────────────────────────────
 
-CACHE_TTL_SECONDS = 300  # 5 minutos
+async def get_approved_profiles() -> list[dict]:
+    """Busca todos os perfis aprovados. Fonte de verdade para rankings e stats."""
+    async with httpx.AsyncClient() as client:
+        r = await client.get(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            headers=supabase_headers(),
+            params={
+                "select": "nick_mudomix,guild,char_class,resets,level,role,approved_at",
+                "approved_at": "not.is.null",
+                "order": "resets.desc",
+            },
+        )
+        if r.status_code == 200:
+            return r.json()
+        return []
 
 
-async def _build_guilds_from_rankings(rankings_data: list) -> list:
-    """Fallback: constrói dados de guilda a partir do ranking já scrapeado."""
-    guild_map: dict = {g: {"name": g, "master": "", "points": 0, "members": []} for g in ALLIANCE_GUILDS}
-    for r in rankings_data:
-        g = r.get("guild", "")
-        if g in guild_map:
-            guild_map[g]["members"].append({
-                "name": r["name"], "char_class": r["char_class"],
-                "resets": r["resets"], "level": 0,
-                "member_level": "Member", "guild": g,
-            })
-    return [
-        {"name": g, "master": m["master"], "points": m["points"],
-         "member_count": len(m["members"]), "members": m["members"]}
-        for g, m in guild_map.items() if m["members"]
+def profiles_to_alliance(profiles: list[dict]) -> dict:
+    """Converte lista de profiles aprovados no formato de aliança esperado pelo frontend."""
+    guilds_map: dict[str, dict] = {
+        g: {"name": g, "master": "", "points": 0, "members": []} for g in ALLIANCE_GUILDS
+    }
+    for p in profiles:
+        g = p.get("guild", "")
+        member = {
+            "name": p.get("nick_mudomix", ""),
+            "char_class": p.get("char_class") or "",
+            "resets": p.get("resets") or 0,
+            "level": p.get("level") or 0,
+            "member_level": "Member",
+            "guild": g,
+        }
+        if g in guilds_map:
+            guilds_map[g]["members"].append(member)
+
+    guilds = [
+        {**v, "member_count": len(v["members"])}
+        for v in guilds_map.values()
+        if v["members"]
     ]
+    all_members = [m for g in guilds for m in g["members"]]
+    total_members = len(all_members)
+    total_resets = sum(m["resets"] for m in all_members)
+    top = max(all_members, key=lambda m: m["resets"]) if all_members else None
 
-
-async def refresh_cache():
-    """Lê dados do Supabase data_cache (populado pelo GitHub Actions scraper)."""
-    logger.info("Carregando cache do Supabase...")
-    try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(
-                f"{SUPABASE_URL}/rest/v1/data_cache",
-                headers=supabase_headers(),
-                params={"select": "key,data,updated_at"},
-            )
-            if r.status_code != 200:
-                logger.warning(f"data_cache retornou {r.status_code}")
-                return
-
-            rows = r.json()
-            guilds_dict: dict = {}
-            for row in rows:
-                key = row["key"]
-                data = row["data"]
-                if key == "rankings" and isinstance(data, list):
-                    _cache["rankings"] = data
-                    _cache["last_ranking_update"] = datetime.now(timezone.utc)
-                elif key.startswith("guild_") and isinstance(data, dict):
-                    guild_name = key[len("guild_"):]
-                    guilds_dict[guild_name] = data
-
-            if guilds_dict:
-                _cache["guilds"] = guilds_dict
-                _cache["last_guild_update"] = datetime.now(timezone.utc)
-
-            # Reconstrói alliance a partir dos dados carregados
-            all_guilds = list(guilds_dict.values())
-            all_members = [m for g in all_guilds for m in g.get("members", [])]
-            total_members = len(all_members)
-            total_resets = sum(m.get("resets", 0) for m in all_members)
-            top = max(all_members, key=lambda m: m.get("resets", 0)) if all_members else None
-
-            _cache["alliance"] = {
-                "guilds": all_guilds,
-                "total_members": total_members,
-                "total_resets": total_resets,
-                "top_reset": top,
-                "online_count": 0,
-                "last_updated": datetime.now(timezone.utc).isoformat(),
-            }
-            logger.info(f"Cache carregado — {total_members} membros, {len(_cache['rankings'])} no ranking.")
-    except Exception as e:
-        logger.error(f"Erro ao carregar cache do Supabase: {e}")
+    return {
+        "guilds": guilds,
+        "total_members": total_members,
+        "total_resets": total_resets,
+        "top_reset": top,
+        "online_count": 0,
+        "last_updated": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await refresh_cache()
-    yield
+    yield  # sem scraping em startup — dados vêm do Supabase on-demand
 
 
 app = FastAPI(
@@ -149,11 +125,8 @@ app.add_middleware(
 )
 
 
-def cache_stale(key: str, ttl: int = CACHE_TTL_SECONDS) -> bool:
-    ts = _cache.get(key)
-    if not ts:
-        return True
-    return (datetime.now(timezone.utc) - ts).total_seconds() > ttl
+def cache_stale(key: str, ttl: int = 300) -> bool:
+    return True  # sem cache local — dados sempre frescos do Supabase
 
 
 # ─── ROTAS ────────────────────────────────────────────────────────────────────
@@ -164,46 +137,55 @@ async def root():
 
 
 @app.get("/api/alliance")
-async def get_alliance(
-    background_tasks: BackgroundTasks,
-    _user: dict = Depends(require_auth),
-):
-    """Retorna dados consolidados de toda a aliança."""
-    if cache_stale("last_guild_update"):
-        background_tasks.add_task(refresh_cache)
-    if not _cache["alliance"]:
-        await refresh_cache()
-    return _cache["alliance"]
+async def get_alliance(_user: dict = Depends(require_auth)):
+    """Retorna dados consolidados de toda a aliança a partir dos perfis aprovados."""
+    profiles = await get_approved_profiles()
+    return profiles_to_alliance(profiles)
 
 
 @app.get("/api/guilds")
 async def list_guilds(_user: dict = Depends(require_auth)):
-    """Lista todas as guildas da aliança."""
-    if not _cache["guilds"]:
-        await refresh_cache()
-    return list(_cache["guilds"].values())
+    """Lista todas as guildas da aliança com seus membros aprovados."""
+    profiles = await get_approved_profiles()
+    alliance = profiles_to_alliance(profiles)
+    return alliance["guilds"]
 
 
 @app.get("/api/guilds/{guild_name}")
 async def get_guild(guild_name: str, _user: dict = Depends(require_auth)):
-    """Retorna dados de uma guilda específica."""
-    # Tenta do cache primeiro
-    for key in _cache["guilds"]:
-        if key.lower() == guild_name.lower():
-            return _cache["guilds"][key]
+    """Retorna membros aprovados de uma guilda específica."""
+    async with httpx.AsyncClient() as client:
+        r = await client.get(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            headers=supabase_headers(),
+            params={
+                "select": "nick_mudomix,char_class,resets,level,guild,role",
+                "guild": f"ilike.{guild_name}",
+                "approved_at": "not.is.null",
+                "order": "resets.desc",
+            },
+        )
+        if r.status_code != 200 or not r.json():
+            raise HTTPException(status_code=404, detail=f"Guilda '{guild_name}' não encontrada")
 
-    # Busca em tempo real
-    data = await scrape_guild(guild_name)
-    if not data:
-        raise HTTPException(status_code=404, detail=f"Guilda '{guild_name}' não encontrada")
-    return data
+        members = [
+            {
+                "name": p["nick_mudomix"],
+                "char_class": p.get("char_class") or "",
+                "resets": p.get("resets") or 0,
+                "level": p.get("level") or 0,
+                "member_level": "Member",
+                "guild": p.get("guild", guild_name),
+            }
+            for p in r.json()
+        ]
+    return {"name": guild_name, "master": "", "points": 0, "member_count": len(members), "members": members}
 
 
 @app.get("/api/guilds/{guild_name}/members")
 async def get_guild_members(guild_name: str, _user: dict = Depends(require_auth)):
-    """Retorna membros de uma guilda."""
-    data = await get_guild(guild_name)
-    return data.get("members", [])
+    data = await get_guild(guild_name, _user)
+    return data["members"]
 
 
 @app.get("/api/members/all")
@@ -212,26 +194,38 @@ async def get_all_members(
     order: str = "desc",
     _user: dict = Depends(require_auth),
 ):
-    """Lista todos os membros de todas as guildas da aliança."""
-    if not _cache["alliance"]:
-        await refresh_cache()
+    """Lista todos os membros aprovados de todas as guildas."""
+    valid_sorts = {"resets", "level", "nick_mudomix", "guild", "char_class"}
+    db_sort = sort_by if sort_by in valid_sorts else "resets"
+    direction = "desc" if order.lower() == "desc" else "asc"
 
-    all_members = []
-    for g in _cache["alliance"]["guilds"]:
-        all_members.extend(g["members"])
+    async with httpx.AsyncClient() as client:
+        r = await client.get(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            headers=supabase_headers(),
+            params={
+                "select": "nick_mudomix,char_class,resets,level,guild",
+                "approved_at": "not.is.null",
+                "order": f"{db_sort}.{direction}",
+            },
+        )
+        profiles = r.json() if r.status_code == 200 else []
 
-    reverse = order.lower() == "desc"
-    valid_sorts = {"resets", "level", "name", "guild", "char_class"}
-    if sort_by not in valid_sorts:
-        sort_by = "resets"
-
-    all_members.sort(key=lambda m: m.get(sort_by, 0), reverse=reverse)
-    return all_members
+    return [
+        {
+            "name": p["nick_mudomix"],
+            "char_class": p.get("char_class") or "",
+            "resets": p.get("resets") or 0,
+            "level": p.get("level") or 0,
+            "guild": p.get("guild", ""),
+        }
+        for p in profiles
+    ]
 
 
 @app.get("/api/characters/{name}")
 async def get_character(name: str, _user: dict = Depends(require_auth)):
-    """Retorna o perfil completo de um personagem."""
+    """Retorna o perfil completo de um personagem (lookup individual no mudomix)."""
     data = await scrape_character(name)
     if not data:
         raise HTTPException(status_code=404, detail=f"Personagem '{name}' não encontrado")
@@ -242,63 +236,50 @@ async def get_character(name: str, _user: dict = Depends(require_auth)):
 async def get_rankings(
     mode: str = "resets",
     guild_filter: Optional[str] = None,
-    background_tasks: BackgroundTasks = None,
     _user: dict = Depends(require_auth),
 ):
-    """Retorna o ranking global. Pode filtrar por guilda."""
-    if cache_stale("last_ranking_update") or not _cache["rankings"]:
-        data = await scrape_rankings(mode)
-        _cache["rankings"] = data
-        _cache["last_ranking_update"] = datetime.now(timezone.utc)
-    else:
-        data = _cache["rankings"]
-
+    """Ranking baseado nos perfis aprovados da plataforma."""
+    profiles = await get_approved_profiles()
+    members = [
+        {
+            "name": p["nick_mudomix"],
+            "char_class": p.get("char_class") or "",
+            "resets": p.get("resets") or 0,
+            "level": p.get("level") or 0,
+            "guild": p.get("guild", ""),
+        }
+        for p in profiles
+    ]
     if guild_filter:
-        data = [r for r in data if r.get("guild", "").lower() == guild_filter.lower()]
-
-    return data
+        members = [m for m in members if m["guild"].lower() == guild_filter.lower()]
+    return members
 
 
 @app.get("/api/rankings/alliance")
 async def get_alliance_rankings(_user: dict = Depends(require_auth)):
-    """Retorna apenas membros das guildas da aliança no ranking global."""
-    guild_names_lower = [g.lower() for g in ALLIANCE_GUILDS]
-    if not _cache["rankings"]:
-        _cache["rankings"] = await scrape_rankings("resets")
-
-    filtered = [
-        r for r in _cache["rankings"]
-        if r.get("guild", "").lower() in guild_names_lower
-    ]
-    return filtered
+    """Rankings apenas de membros aprovados das guildas da aliança."""
+    return await get_rankings(_user=_user)
 
 
 @app.post("/api/refresh")
 async def force_refresh(_user: dict = Depends(require_auth)):
-    """Força atualização do cache (admin)."""
-    await refresh_cache()
-    return {"message": "Cache atualizado com sucesso", "timestamp": datetime.now(timezone.utc).isoformat()}
+    """Compatibilidade — dados já são sempre frescos do Supabase."""
+    return {"message": "Dados atualizados", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 @app.get("/api/stats/alliance")
 async def get_alliance_stats(_user: dict = Depends(require_auth)):
-    """Estatísticas gerais da aliança."""
-    if not _cache["alliance"]:
-        await refresh_cache()
-
-    alliance = _cache["alliance"]
+    """Estatísticas gerais da aliança baseadas nos perfis aprovados."""
+    profiles = await get_approved_profiles()
+    alliance = profiles_to_alliance(profiles)
     all_members = [m for g in alliance["guilds"] for m in g["members"]]
 
-    # Distribuição por classe
     class_dist: dict = {}
     for m in all_members:
-        c = m["char_class"]
+        c = m["char_class"] or "Desconhecida"
         class_dist[c] = class_dist.get(c, 0) + 1
 
-    # Distribuição por guilda
     guild_dist = {g["name"]: len(g["members"]) for g in alliance["guilds"]}
-
-    # Top 10 resets
     top10 = sorted(all_members, key=lambda m: m["resets"], reverse=True)[:10]
 
     return {
@@ -366,6 +347,14 @@ async def save_profile(
         "avatar_url": body.avatar_url,
         "role": "pending",
     }
+
+    # Tenta buscar dados do personagem para popular char_class, resets, level
+    char_data = await scrape_character(body.nick_mudomix)
+    if char_data and not char_data.get("profile_blocked"):
+        record["char_class"] = char_data.get("char_class", "")
+        record["resets"] = char_data.get("resets", 0)
+        record["level"] = char_data.get("level", 0)
+        record["last_synced"] = datetime.now(timezone.utc).isoformat()
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(

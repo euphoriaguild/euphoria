@@ -1,35 +1,31 @@
-import asyncio
 import httpx
 from bs4 import BeautifulSoup
 from typing import Optional
 import re
 import logging
-from playwright.async_api import async_playwright
 
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://mudomix.com"
-
-# As guildas da aliança
 ALLIANCE_GUILDS = ["Euphoria", "Euphor1a", "Jackson5", "HellBoyz"]
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "pt-BR,pt;q=0.9",
+}
 
 
 async def fetch_page(url: str) -> Optional[BeautifulSoup]:
-    """Busca uma página usando Playwright (Chrome headless) para passar pelo Cloudflare."""
+    """Busca uma página individual (ex: perfil de personagem)."""
     try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
-            await page.goto(url, wait_until="networkidle", timeout=30000)
-            html = await page.content()
-            await browser.close()
-            if html:
-                return BeautifulSoup(html, "lxml")
+        async with httpx.AsyncClient(headers=HEADERS, timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return BeautifulSoup(resp.text, "lxml")
     except Exception as e:
         logger.warning(f"Erro ao buscar {url}: {e}")
-    return None
+        return None
 
 
 async def scrape_guild(guild_name: str) -> Optional[dict]:
