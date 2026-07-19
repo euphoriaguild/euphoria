@@ -11,9 +11,9 @@ export const HORARIOS_BC: Horario[] = [
 ]
 
 export const HORARIOS_ILUSION: Horario[] = [
-  [10, 30],
-  [16, 30],
-  [23, 30],
+  [10, 25],
+  [16, 25],
+  [23, 25],
 ]
 
 // Mantido por compatibilidade (BC só com hora cheia)
