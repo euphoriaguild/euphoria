@@ -13,7 +13,7 @@ const EXTRA_COLORS = [
 ]
 
 export function Raffle() {
-  const { isStaff, profile } = useAuth()
+  const { profile } = useAuth()
 
   const [active, setActive] = useState<ActiveRaffle | null>(null)
   const [participants, setParticipants] = useState<string[]>([])
@@ -271,12 +271,12 @@ export function Raffle() {
           {/* ── Painel esquerdo ── */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
-            {/* Staff: criar sorteio */}
-            {isStaff && (
+            {/* Criar sorteio (qualquer membro) */}
+            {profile?.nick_mudomix && (
               <div className="card">
                 <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)',
                   textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
-                  ⚙️ Staff — Novo sorteio
+                  ⚙️ Novo sorteio
                 </div>
                 <input
                   value={newPrize}
@@ -350,8 +350,8 @@ export function Raffle() {
                     {participants.length} participante{participants.length !== 1 ? 's' : ''}
                   </div>
 
-                  {/* Ações do staff: editar prêmio / fechar */}
-                  {isStaff && !editingPrize && (
+                  {/* Ações: editar prêmio / fechar (qualquer membro) */}
+                  {profile?.nick_mudomix && !editingPrize && (
                     <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
                       <button className="btn btn-ghost" style={{ flex: 1, justifyContent: 'center', fontSize: 12 }}
                         onClick={() => { setEditPrizeInput(raffle.prize); setEditingPrize(true) }} disabled={busy}>
@@ -386,7 +386,7 @@ export function Raffle() {
               ) : (
                 <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
                   Nenhum sorteio aberto no momento.
-                  {isStaff && ' Crie um acima.'}
+                  {profile?.nick_mudomix && ' Crie um acima.'}
                 </div>
               )}
             </div>
@@ -480,8 +480,8 @@ export function Raffle() {
               )}
             </div>
 
-            {/* Girar Roleta — apenas staff */}
-            {isStaff ? (
+            {/* Girar Roleta — qualquer membro */}
+            {profile?.nick_mudomix ? (
               <button
                 className="btn btn-primary"
                 onClick={spin}
@@ -499,7 +499,7 @@ export function Raffle() {
               </button>
             ) : (
               <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
-                Apenas a staff pode girar a roleta.
+                Configure seu nick no perfil para girar a roleta.
               </div>
             )}
           </div>

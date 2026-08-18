@@ -841,6 +841,12 @@ def _require_staff(profile: dict):
         raise HTTPException(status_code=403, detail="Acesso restrito a staff")
 
 
+def _require_member(profile: dict):
+    """Permite qualquer membro aprovado (não exige staff)."""
+    if profile.get("approved_at") is None and profile.get("role") not in ("member", "staff", "admin"):
+        raise HTTPException(status_code=403, detail="Apenas membros aprovados.")
+
+
 def _iso_week_start() -> str:
     """Retorna a segunda-feira (início) da semana atual em Brasília, formato YYYY-MM-DD."""
     now = get_brasilia_now()
@@ -889,11 +895,11 @@ async def get_active_raffle(user: dict = Depends(require_auth)):
 
 @app.post("/api/raffle/create")
 async def create_raffle(body: RaffleCreatePayload, user: dict = Depends(require_auth)):
-    """Staff abre um novo sorteio (fecha qualquer sorteio anterior aberto)."""
+    """Qualquer membro abre um novo sorteio (fecha qualquer sorteio anterior aberto)."""
     clerk_id = user.get("sub")
     async with httpx.AsyncClient() as client:
         me = await _get_requester_profile(client, clerk_id)
-        _require_staff(me)
+        _require_member(me)
 
         # Fecha sorteios abertos anteriores
         await client.patch(
@@ -916,11 +922,11 @@ async def create_raffle(body: RaffleCreatePayload, user: dict = Depends(require_
 
 @app.post("/api/raffle/edit")
 async def edit_raffle(body: RaffleCreatePayload, user: dict = Depends(require_auth)):
-    """Staff edita o prêmio do sorteio ativo."""
+    """Qualquer membro edita o prêmio do sorteio ativo."""
     clerk_id = user.get("sub")
     async with httpx.AsyncClient() as client:
         me = await _get_requester_profile(client, clerk_id)
-        _require_staff(me)
+        _require_member(me)
 
         r = await client.get(
             f"{SUPABASE_URL}/rest/v1/raffles",
@@ -944,11 +950,11 @@ async def edit_raffle(body: RaffleCreatePayload, user: dict = Depends(require_au
 
 @app.post("/api/raffle/close")
 async def close_raffle(user: dict = Depends(require_auth)):
-    """Staff fecha/cancela o sorteio ativo sem sortear vencedor."""
+    """Qualquer membro fecha/cancela o sorteio ativo sem sortear vencedor."""
     clerk_id = user.get("sub")
     async with httpx.AsyncClient() as client:
         me = await _get_requester_profile(client, clerk_id)
-        _require_staff(me)
+        _require_member(me)
 
         resp = await client.patch(
             f"{SUPABASE_URL}/rest/v1/raffles",
@@ -1023,11 +1029,11 @@ class RaffleDrawPayload(BaseModel):
 
 @app.post("/api/raffle/draw")
 async def draw_raffle(body: RaffleDrawPayload, user: dict = Depends(require_auth)):
-    """Staff registra o vencedor e fecha o sorteio ativo."""
+    """Registra o vencedor e fecha o sorteio ativo."""
     clerk_id = user.get("sub")
     async with httpx.AsyncClient() as client:
         me = await _get_requester_profile(client, clerk_id)
-        _require_staff(me)
+        _require_member(me)
 
         r = await client.get(
             f"{SUPABASE_URL}/rest/v1/raffles",
