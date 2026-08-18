@@ -540,6 +540,7 @@ async def worldboss_checkin(user: dict = Depends(require_auth)):
         resp = await client.post(
             f"{SUPABASE_URL}/rest/v1/world_boss_checkins",
             headers={**supabase_headers(), "Prefer": "resolution=ignore-duplicates,return=representation"},
+            params={"on_conflict": "clerk_id,boss_date"},
             json={
                 "clerk_id": clerk_id,
                 "nick_mudomix": profile["nick_mudomix"],
@@ -598,7 +599,28 @@ async def get_worldboss_checkins(
         )
         if resp.status_code >= 400:
             return []
-    return resp.json()
+        checkins = resp.json()
+
+        # Enriquece com a classe atual do perfil (check-ins antigos podem não ter char_class)
+        nicks = [c["nick_mudomix"] for c in checkins if not c.get("char_class")]
+        if nicks:
+            in_list = ",".join(f'"{n}"' for n in nicks)
+            pr = await client.get(
+                f"{SUPABASE_URL}/rest/v1/profiles",
+                headers=supabase_headers(),
+                params={
+                    "nick_mudomix": f"in.({in_list})",
+                    "select": "nick_mudomix,char_class",
+                },
+            )
+            class_map = {
+                p["nick_mudomix"]: p.get("char_class")
+                for p in (pr.json() if pr.status_code == 200 else [])
+            }
+            for c in checkins:
+                if not c.get("char_class"):
+                    c["char_class"] = class_map.get(c["nick_mudomix"])
+    return checkins
 
 
 class PartiesPayload(BaseModel):
@@ -630,6 +652,7 @@ async def save_worldboss_parties(body: PartiesPayload, user: dict = Depends(requ
         resp = await client.post(
             f"{SUPABASE_URL}/rest/v1/world_boss_parties",
             headers={**supabase_headers(), "Prefer": "resolution=merge-duplicates,return=representation"},
+            params={"on_conflict": "boss_date"},
             json=record,
         )
         if resp.status_code >= 400:
@@ -908,6 +931,7 @@ async def join_raffle(user: dict = Depends(require_auth)):
         resp = await client.post(
             f"{SUPABASE_URL}/rest/v1/raffle_entries",
             headers={**supabase_headers(), "Prefer": "resolution=ignore-duplicates,return=representation"},
+            params={"on_conflict": "raffle_id,clerk_id"},
             json={"raffle_id": raffle_id, "clerk_id": clerk_id, "nick_mudomix": nick},
         )
         if resp.status_code >= 400:
@@ -1080,6 +1104,7 @@ async def toggle_donation(body: DonationTogglePayload, user: dict = Depends(requ
             resp = await client.post(
                 f"{SUPABASE_URL}/rest/v1/donations",
                 headers={**supabase_headers(), "Prefer": "resolution=ignore-duplicates,return=representation"},
+                params={"on_conflict": "week_start,nick_mudomix"},
                 json={
                     "week_start": week,
                     "nick_mudomix": body.nick_mudomix,
