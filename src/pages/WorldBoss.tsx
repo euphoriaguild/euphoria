@@ -3,11 +3,12 @@ import { CheckCircle, RefreshCw, Plus, Trash2 } from 'lucide-react'
 import { api, type WorldBossToday, type WorldBossCheckin, type WorldBossParty } from '../lib/api'
 import { useAuth } from '../contexts/AuthContext'
 
-const GUILD_COLORS: Record<string, string> = {
-  Euphoria: 'guild-euphoria',
-  Euphor1a: 'guild-euphor1a',
-  Jackson5: 'guild-jackson5',
-  HellBoyz: 'guild-hellboyz',
+const CLASS_COLORS: Record<string, string> = {
+  'ELF': 'class-me',
+  'BK': 'class-bk',
+  'DL': 'class-dl',
+  'MG': 'class-mg',
+  'SM': 'class-sm',
 }
 
 const SCHEDULE = [
@@ -282,7 +283,7 @@ export function WorldBoss() {
                       <tr>
                         <th>#</th>
                         <th>Personagem</th>
-                        <th>Guilda</th>
+                        <th>Classe</th>
                         <th>Confirmado às</th>
                       </tr>
                     </thead>
@@ -300,7 +301,7 @@ export function WorldBoss() {
                               </span>
                             )}
                           </td>
-                          <td className={GUILD_COLORS[c.guild ?? ''] ?? ''}>{c.guild ?? '—'}</td>
+                          <td className={CLASS_COLORS[c.char_class ?? ''] ?? ''}>{c.char_class ?? '—'}</td>
                           <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                             {new Date(c.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                           </td>
@@ -332,9 +333,9 @@ export function WorldBoss() {
                             color: 'var(--text-secondary)', display: 'flex', gap: 6 }}>
                             <span style={{ color: 'var(--text-muted)', minWidth: 16 }}>{i + 1}.</span>
                             <span style={{ fontWeight: 500 }}>{m}</span>
-                            {ci?.guild && (
-                              <span className={GUILD_COLORS[ci.guild] ?? ''} style={{ fontSize: 10 }}>
-                                {ci.guild}
+                            {ci?.char_class && (
+                              <span className={CLASS_COLORS[ci.char_class] ?? ''} style={{ fontSize: 10 }}>
+                                {ci.char_class}
                               </span>
                             )}
                           </div>
@@ -375,7 +376,7 @@ export function WorldBoss() {
                     <thead>
                       <tr>
                         <th>Personagem</th>
-                        <th>Guilda</th>
+                        <th>Classe</th>
                         <th style={{ minWidth: 150 }}>Party</th>
                       </tr>
                     </thead>
@@ -383,7 +384,7 @@ export function WorldBoss() {
                       {checkins.map(c => (
                         <tr key={c.id}>
                           <td style={{ fontWeight: 500 }}>{c.nick_mudomix}</td>
-                          <td className={GUILD_COLORS[c.guild ?? ''] ?? ''}>{c.guild ?? '—'}</td>
+                          <td className={CLASS_COLORS[c.char_class ?? ''] ?? ''}>{c.char_class ?? '—'}</td>
                           <td>
                             <select
                               value={assignments[c.nick_mudomix] ?? UNASSIGNED}

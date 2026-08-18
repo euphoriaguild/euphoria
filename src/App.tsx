@@ -15,6 +15,7 @@ import { Rankings }   from './pages/Rankings'
 import { Events }     from './pages/Events'
 import { WorldBoss }  from './pages/WorldBoss'
 import { Raffle }     from './pages/Raffle'
+import { Donations }  from './pages/Donations'
 import { Profile }    from './pages/Profile'
 import { GuildPage }  from './pages/GuildPage'
 import { Requests }   from './pages/Requests'
@@ -51,6 +52,7 @@ export default function App() {
           <Route path="/eventos"         element={<Protected><Events /></Protected>} />
           <Route path="/world-boss"      element={<Protected><WorldBoss /></Protected>} />
           <Route path="/sorteio"         element={<Protected><Raffle /></Protected>} />
+          <Route path="/doacoes"         element={<Protected><Donations /></Protected>} />
           <Route path="/perfil"          element={<Protected><Profile /></Protected>} />
           <Route path="/perfil/:name"    element={<Protected><Profile /></Protected>} />
 

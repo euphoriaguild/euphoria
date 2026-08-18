@@ -1,20 +1,10 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Trophy, Swords,
-  Dice5, Globe, User, Shield, ClipboardList, LogOut,
+  Dice5, Globe, User, Coins, ClipboardList, LogOut,
 } from 'lucide-react'
 import { useClerk, useUser } from '@clerk/clerk-react'
 import { useAuth } from '../contexts/AuthContext'
-
-const GUILDS = ['Euphoria', 'Euphor1a', 'Jackson5', 'HellBoyz']
-
-function guildClass(name: string) {
-  const map: Record<string, string> = {
-    Euphoria: 'guild-euphoria', Euphor1a: 'guild-euphor1a',
-    Jackson5: 'guild-jackson5', HellBoyz: 'guild-hellboyz',
-  }
-  return map[name] ?? ''
-}
 
 const ROLE_LABELS: Record<string, string> = {
   admin: 'Admin',
@@ -62,18 +52,6 @@ export function Sidebar() {
           Rankings
         </NavLink>
 
-        <span className="nav-section-title">Guildas</span>
-        {GUILDS.map(g => (
-          <NavLink
-            key={g}
-            to={`/guilda/${g}`}
-            className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
-          >
-            <Shield />
-            <span className={guildClass(g)}>{g}</span>
-          </NavLink>
-        ))}
-
         <span className="nav-section-title">Eventos</span>
 
         <NavLink to="/eventos" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
@@ -91,6 +69,11 @@ export function Sidebar() {
         <NavLink to="/sorteio" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
           <Dice5 />
           Sorteio
+        </NavLink>
+
+        <NavLink to="/doacoes" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+          <Coins />
+          Doações
         </NavLink>
 
         <NavLink to="/perfil" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>

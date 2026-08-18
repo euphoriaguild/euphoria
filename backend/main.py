@@ -527,7 +527,7 @@ async def worldboss_checkin(user: dict = Depends(require_auth)):
         profile_resp = await client.get(
             f"{SUPABASE_URL}/rest/v1/profiles",
             headers=supabase_headers(),
-            params={"clerk_id": f"eq.{clerk_id}", "select": "nick_mudomix,guild,role"},
+            params={"clerk_id": f"eq.{clerk_id}", "select": "nick_mudomix,guild,char_class,role"},
         )
         rows = profile_resp.json()
         if not rows:
@@ -544,6 +544,7 @@ async def worldboss_checkin(user: dict = Depends(require_auth)):
                 "clerk_id": clerk_id,
                 "nick_mudomix": profile["nick_mudomix"],
                 "guild": profile.get("guild"),
+                "char_class": profile.get("char_class"),
                 "boss_date": info["boss_date"],
                 "boss_name": info["boss_name"],
             },
@@ -591,7 +592,7 @@ async def get_worldboss_checkins(
             headers=supabase_headers(),
             params={
                 "boss_date": f"eq.{date}",
-                "select": "id,nick_mudomix,guild,boss_name,created_at",
+                "select": "id,nick_mudomix,guild,char_class,boss_name,created_at",
                 "order": "created_at.asc",
             },
         )
@@ -786,3 +787,311 @@ async def get_all_members_admin(
         }
         for p in profiles
     ]
+
+
+# ── Helpers de autorização e perfil ──────────────────────────────────────────
+
+async def _get_requester_profile(client: httpx.AsyncClient, clerk_id: str) -> dict:
+    """Retorna o perfil do usuário autenticado (nick, role, char_class)."""
+    resp = await client.get(
+        f"{SUPABASE_URL}/rest/v1/profiles",
+        headers=supabase_headers(),
+        params={"clerk_id": f"eq.{clerk_id}", "select": "nick_mudomix,char_class,role,approved_at", "limit": "1"},
+    )
+    rows = resp.json() if resp.status_code == 200 else []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Perfil não encontrado")
+    return rows[0]
+
+
+def _require_staff(profile: dict):
+    if profile.get("role") not in ("staff", "admin"):
+        raise HTTPException(status_code=403, detail="Acesso restrito a staff")
+
+
+def _iso_week_start() -> str:
+    """Retorna a segunda-feira (início) da semana atual em Brasília, formato YYYY-MM-DD."""
+    now = get_brasilia_now()
+    monday = now.date().fromordinal(now.date().toordinal() - now.weekday())
+    return monday.isoformat()
+
+
+# ── Sorteio (self-service) ───────────────────────────────────────────────────
+
+class RaffleCreatePayload(BaseModel):
+    prize: str
+
+
+@app.get("/api/raffle/active")
+async def get_active_raffle(user: dict = Depends(require_auth)):
+    """Retorna o sorteio ativo, seus participantes e se o usuário já entrou."""
+    clerk_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        me = await _get_requester_profile(client, clerk_id)
+
+        r = await client.get(
+            f"{SUPABASE_URL}/rest/v1/raffles",
+            headers=supabase_headers(),
+            params={"status": "eq.open", "select": "*", "order": "created_at.desc", "limit": "1"},
+        )
+        raffles = r.json() if r.status_code == 200 else []
+        if not raffles:
+            return {"raffle": None, "participants": [], "joined": False, "my_nick": me.get("nick_mudomix")}
+
+        raffle = raffles[0]
+        p = await client.get(
+            f"{SUPABASE_URL}/rest/v1/raffle_entries",
+            headers=supabase_headers(),
+            params={"raffle_id": f"eq.{raffle['id']}", "select": "nick_mudomix,clerk_id,created_at", "order": "created_at.asc"},
+        )
+        entries = p.json() if p.status_code == 200 else []
+        joined = any(e.get("clerk_id") == clerk_id for e in entries)
+
+    return {
+        "raffle": raffle,
+        "participants": [e["nick_mudomix"] for e in entries],
+        "joined": joined,
+        "my_nick": me.get("nick_mudomix"),
+    }
+
+
+@app.post("/api/raffle/create")
+async def create_raffle(body: RaffleCreatePayload, user: dict = Depends(require_auth)):
+    """Staff abre um novo sorteio (fecha qualquer sorteio anterior aberto)."""
+    clerk_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        me = await _get_requester_profile(client, clerk_id)
+        _require_staff(me)
+
+        # Fecha sorteios abertos anteriores
+        await client.patch(
+            f"{SUPABASE_URL}/rest/v1/raffles",
+            headers=supabase_headers(),
+            params={"status": "eq.open"},
+            json={"status": "closed"},
+        )
+
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/raffles",
+            headers={**supabase_headers(), "Prefer": "return=representation"},
+            json={"prize": body.prize, "status": "open", "created_by": clerk_id},
+        )
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=500, detail=resp.text)
+        data = resp.json()
+    return data[0] if isinstance(data, list) and data else {"ok": True}
+
+
+@app.post("/api/raffle/join")
+async def join_raffle(user: dict = Depends(require_auth)):
+    """Usuário logado entra no sorteio ativo com o PRÓPRIO nick."""
+    clerk_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        me = await _get_requester_profile(client, clerk_id)
+        if me.get("approved_at") is None and me.get("role") not in ("member", "staff", "admin"):
+            raise HTTPException(status_code=403, detail="Apenas membros aprovados podem participar.")
+
+        nick = me.get("nick_mudomix")
+        if not nick:
+            raise HTTPException(status_code=400, detail="Seu perfil não tem nick definido.")
+
+        r = await client.get(
+            f"{SUPABASE_URL}/rest/v1/raffles",
+            headers=supabase_headers(),
+            params={"status": "eq.open", "select": "id", "order": "created_at.desc", "limit": "1"},
+        )
+        raffles = r.json() if r.status_code == 200 else []
+        if not raffles:
+            raise HTTPException(status_code=400, detail="Nenhum sorteio aberto no momento.")
+        raffle_id = raffles[0]["id"]
+
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/raffle_entries",
+            headers={**supabase_headers(), "Prefer": "resolution=ignore-duplicates,return=representation"},
+            json={"raffle_id": raffle_id, "clerk_id": clerk_id, "nick_mudomix": nick},
+        )
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=500, detail=resp.text)
+    return {"ok": True, "nick": nick}
+
+
+@app.post("/api/raffle/leave")
+async def leave_raffle(user: dict = Depends(require_auth)):
+    """Usuário sai do sorteio ativo."""
+    clerk_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        r = await client.get(
+            f"{SUPABASE_URL}/rest/v1/raffles",
+            headers=supabase_headers(),
+            params={"status": "eq.open", "select": "id", "order": "created_at.desc", "limit": "1"},
+        )
+        raffles = r.json() if r.status_code == 200 else []
+        if not raffles:
+            return {"ok": True}
+        raffle_id = raffles[0]["id"]
+        await client.delete(
+            f"{SUPABASE_URL}/rest/v1/raffle_entries",
+            headers=supabase_headers(),
+            params={"raffle_id": f"eq.{raffle_id}", "clerk_id": f"eq.{clerk_id}"},
+        )
+    return {"ok": True}
+
+
+class RaffleDrawPayload(BaseModel):
+    winner: str
+
+
+@app.post("/api/raffle/draw")
+async def draw_raffle(body: RaffleDrawPayload, user: dict = Depends(require_auth)):
+    """Staff registra o vencedor e fecha o sorteio ativo."""
+    clerk_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        me = await _get_requester_profile(client, clerk_id)
+        _require_staff(me)
+
+        r = await client.get(
+            f"{SUPABASE_URL}/rest/v1/raffles",
+            headers=supabase_headers(),
+            params={"status": "eq.open", "select": "id,prize", "order": "created_at.desc", "limit": "1"},
+        )
+        raffles = r.json() if r.status_code == 200 else []
+        if not raffles:
+            raise HTTPException(status_code=400, detail="Nenhum sorteio aberto.")
+        raffle = raffles[0]
+
+        p = await client.get(
+            f"{SUPABASE_URL}/rest/v1/raffle_entries",
+            headers=supabase_headers(),
+            params={"raffle_id": f"eq.{raffle['id']}", "select": "nick_mudomix"},
+        )
+        participants = [e["nick_mudomix"] for e in (p.json() if p.status_code == 200 else [])]
+
+        # Marca sorteio como sorteado
+        await client.patch(
+            f"{SUPABASE_URL}/rest/v1/raffles",
+            headers=supabase_headers(),
+            params={"id": f"eq.{raffle['id']}"},
+            json={"status": "drawn", "winner_nick": body.winner},
+        )
+
+        # Salva no histórico
+        await client.post(
+            f"{SUPABASE_URL}/rest/v1/raffle_history",
+            headers={**supabase_headers(), "Prefer": "return=representation"},
+            json={
+                "prize": raffle["prize"],
+                "winner_nick": body.winner,
+                "conducted_by": me.get("nick_mudomix"),
+                "participants": participants,
+            },
+        )
+    return {"ok": True}
+
+
+# ── Doações de Zen ───────────────────────────────────────────────────────────
+
+class DonationConfigPayload(BaseModel):
+    weekly_amount: str  # ex: "100kk"
+
+
+class DonationTogglePayload(BaseModel):
+    nick_mudomix: str
+    paid: bool
+
+
+@app.get("/api/donations")
+async def get_donations(user: dict = Depends(require_auth)):
+    """Retorna config da semana + lista de membros com status de doação."""
+    clerk_id = user.get("sub")
+    week = _iso_week_start()
+    async with httpx.AsyncClient() as client:
+        await _get_requester_profile(client, clerk_id)  # garante autenticado
+
+        # Config atual (valor semanal)
+        cfg = await client.get(
+            f"{SUPABASE_URL}/rest/v1/donation_config",
+            headers=supabase_headers(),
+            params={"select": "weekly_amount", "order": "id.desc", "limit": "1"},
+        )
+        cfg_rows = cfg.json() if cfg.status_code == 200 else []
+        weekly_amount = cfg_rows[0]["weekly_amount"] if cfg_rows else "100kk"
+
+        # Membros aprovados
+        m = await client.get(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            headers=supabase_headers(),
+            params={
+                "select": "nick_mudomix,char_class",
+                "approved_at": "not.is.null",
+                "order": "nick_mudomix.asc",
+            },
+        )
+        members = m.json() if m.status_code == 200 else []
+
+        # Doações da semana atual
+        d = await client.get(
+            f"{SUPABASE_URL}/rest/v1/donations",
+            headers=supabase_headers(),
+            params={"week_start": f"eq.{week}", "select": "nick_mudomix"},
+        )
+        paid_nicks = {row["nick_mudomix"] for row in (d.json() if d.status_code == 200 else [])}
+
+    return {
+        "week_start": week,
+        "weekly_amount": weekly_amount,
+        "members": [
+            {
+                "nick_mudomix": mm["nick_mudomix"],
+                "char_class": mm.get("char_class") or "",
+                "paid": mm["nick_mudomix"] in paid_nicks,
+            }
+            for mm in members
+        ],
+    }
+
+
+@app.post("/api/donations/config")
+async def set_donation_config(body: DonationConfigPayload, user: dict = Depends(require_auth)):
+    """Staff altera o valor semanal de doação."""
+    clerk_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        me = await _get_requester_profile(client, clerk_id)
+        _require_staff(me)
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/donation_config",
+            headers={**supabase_headers(), "Prefer": "return=representation"},
+            json={"weekly_amount": body.weekly_amount, "updated_by": clerk_id},
+        )
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=500, detail=resp.text)
+    return {"ok": True}
+
+
+@app.post("/api/donations/toggle")
+async def toggle_donation(body: DonationTogglePayload, user: dict = Depends(require_auth)):
+    """Staff marca/desmarca a doação de um membro na semana atual."""
+    clerk_id = user.get("sub")
+    week = _iso_week_start()
+    async with httpx.AsyncClient() as client:
+        me = await _get_requester_profile(client, clerk_id)
+        _require_staff(me)
+
+        if body.paid:
+            resp = await client.post(
+                f"{SUPABASE_URL}/rest/v1/donations",
+                headers={**supabase_headers(), "Prefer": "resolution=ignore-duplicates,return=representation"},
+                json={
+                    "week_start": week,
+                    "nick_mudomix": body.nick_mudomix,
+                    "marked_by": me.get("nick_mudomix"),
+                },
+            )
+            if resp.status_code >= 400:
+                raise HTTPException(status_code=500, detail=resp.text)
+        else:
+            await client.delete(
+                f"{SUPABASE_URL}/rest/v1/donations",
+                headers=supabase_headers(),
+                params={"week_start": f"eq.{week}", "nick_mudomix": f"eq.{body.nick_mudomix}"},
+            )
+    return {"ok": True}

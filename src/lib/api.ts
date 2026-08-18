@@ -128,6 +128,49 @@ export const api = {
   getAllMembersAdmin: () => apiFetch<AdminMember[]>('/api/members/all/admin'),
   updateMember: (nick: string, data: { char_class?: string; resets?: number; level?: number }) =>
     apiFetch(`/api/members/${encodeURIComponent(nick)}`, { method: 'PATCH', body: JSON.stringify({ nick_mudomix: nick, ...data }) }),
+
+  // Sorteio (self-service)
+  getActiveRaffle: () => apiFetch<ActiveRaffle>('/api/raffle/active'),
+  createRaffle: (prize: string) =>
+    apiFetch<RaffleData>('/api/raffle/create', { method: 'POST', body: JSON.stringify({ prize }) }),
+  joinRaffle: () => apiFetch<{ ok: boolean; nick: string }>('/api/raffle/join', { method: 'POST' }),
+  leaveRaffle: () => apiFetch('/api/raffle/leave', { method: 'POST' }),
+  drawRaffle: (winner: string) =>
+    apiFetch('/api/raffle/draw', { method: 'POST', body: JSON.stringify({ winner }) }),
+
+  // Doações de Zen
+  getDonations: () => apiFetch<DonationsData>('/api/donations'),
+  setDonationConfig: (weekly_amount: string) =>
+    apiFetch('/api/donations/config', { method: 'POST', body: JSON.stringify({ weekly_amount }) }),
+  toggleDonation: (nick_mudomix: string, paid: boolean) =>
+    apiFetch('/api/donations/toggle', { method: 'POST', body: JSON.stringify({ nick_mudomix, paid }) }),
+}
+
+export interface RaffleData {
+  id: number
+  prize: string
+  status: string
+  winner_nick: string | null
+  created_at: string
+}
+
+export interface ActiveRaffle {
+  raffle: RaffleData | null
+  participants: string[]
+  joined: boolean
+  my_nick: string | null
+}
+
+export interface DonationMember {
+  nick_mudomix: string
+  char_class: string
+  paid: boolean
+}
+
+export interface DonationsData {
+  week_start: string
+  weekly_amount: string
+  members: DonationMember[]
 }
 
 export interface RaffleHistoryEntry {
@@ -153,6 +196,7 @@ export interface WorldBossCheckin {
   id: number
   nick_mudomix: string
   guild: string | null
+  char_class: string | null
   boss_name: string
   created_at: string
 }
