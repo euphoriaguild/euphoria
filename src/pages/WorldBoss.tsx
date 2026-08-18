@@ -39,8 +39,6 @@ function countdown(target: Date, now: Date): string {
   return `${h}:${m}:${s}`
 }
 
-const UNASSIGNED = '__none__'
-
 export function WorldBoss() {
   const { profile, isStaff } = useAuth()
   const now = useNow()
@@ -53,6 +51,8 @@ export function WorldBoss() {
   const [loading, setLoading] = useState(true)
   const [checkingIn, setCheckingIn] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [draggedNick, setDraggedNick] = useState<string | null>(null)
+  const [dragOverParty, setDragOverParty] = useState<string | null>(null)
 
   const myNick = profile?.nick_mudomix
   const myCheckedIn = checkins.some(c => c.nick_mudomix === myNick)
@@ -136,6 +136,17 @@ export function WorldBoss() {
     } finally {
       setSaving(false)
     }
+  }
+
+  // Atribui o membro arrastado a uma party (ou "" = pool não alocado)
+  function assignTo(nick: string, party: string) {
+    setAssignments(prev => ({ ...prev, [nick]: party }))
+  }
+
+  function handleDrop(party: string) {
+    if (draggedNick) assignTo(draggedNick, party)
+    setDraggedNick(null)
+    setDragOverParty(null)
   }
 
   const eventDate = todayInfo ? new Date(todayInfo.event_time) : null
@@ -368,69 +379,92 @@ export function WorldBoss() {
                 </div>
 
                 <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>
-                  Selecione a party de cada membro confirmado. Membros sem party ficam como "Não alocado".
+                  Arraste 🖱️ cada membro para a party desejada. Solte na caixa "Não alocados" para remover de uma PT.
                 </p>
 
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Personagem</th>
-                        <th>Classe</th>
-                        <th style={{ minWidth: 150 }}>Party</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {checkins.map(c => (
-                        <tr key={c.id}>
-                          <td style={{ fontWeight: 500 }}>{c.nick_mudomix}</td>
-                          <td className={CLASS_COLORS[c.char_class ?? ''] ?? ''}>{c.char_class ?? '—'}</td>
-                          <td>
-                            <select
-                              value={assignments[c.nick_mudomix] ?? UNASSIGNED}
-                              onChange={e => {
-                                const val = e.target.value
-                                setAssignments(prev => ({
-                                  ...prev,
-                                  [c.nick_mudomix]: val === UNASSIGNED ? '' : val,
-                                }))
-                              }}
-                              style={{
-                                padding: '5px 10px', background: 'var(--bg-600)',
-                                border: '1px solid var(--border)', borderRadius: 6,
-                                color: assignments[c.nick_mudomix] ? 'var(--accent)' : 'var(--text-muted)',
-                                fontSize: 13, cursor: 'pointer',
-                              }}
-                            >
-                              <option value={UNASSIGNED}>— Não alocado —</option>
-                              {partyNames.map(name => (
-                                <option key={name} value={name}>{name}</option>
-                              ))}
-                            </select>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                {(() => {
+                  // Renderiza um chip arrastável de membro
+                  const Chip = ({ c }: { c: WorldBossCheckin }) => (
+                    <div
+                      draggable
+                      onDragStart={() => setDraggedNick(c.nick_mudomix)}
+                      onDragEnd={() => { setDraggedNick(null); setDragOverParty(null) }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        padding: '6px 10px', marginBottom: 6, borderRadius: 6,
+                        background: 'var(--bg-600)', border: '1px solid var(--border)',
+                        cursor: 'grab', fontSize: 12,
+                        opacity: draggedNick === c.nick_mudomix ? 0.4 : 1,
+                        userSelect: 'none',
+                      }}
+                    >
+                      <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>⋮⋮</span>
+                      <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{c.nick_mudomix}</span>
+                      {c.char_class && (
+                        <span className={CLASS_COLORS[c.char_class] ?? ''} style={{ fontSize: 10, marginLeft: 'auto' }}>
+                          {c.char_class}
+                        </span>
+                      )}
+                    </div>
+                  )
 
-                {/* Preview das partys */}
-                <div style={{ marginTop: 16, display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10 }}>
-                  {partyNames.map(name => {
-                    const members = checkins.filter(c => assignments[c.nick_mudomix] === name)
-                    return (
-                      <div key={name} style={{
-                        padding: '10px 12px', background: 'var(--bg-700)',
-                        border: '1px solid var(--border)', borderRadius: 8,
-                      }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between',
-                          alignItems: 'center', marginBottom: 6 }}>
-                          <span style={{ fontWeight: 700, fontSize: 12, color: 'var(--accent)' }}>{name}</span>
-                          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{members.length}p</span>
-                            <button
-                              onClick={() => {
+                  const poolMembers = checkins.filter(c => !assignments[c.nick_mudomix])
+
+                  // Caixa (drop zone) genérica
+                  const DropBox = ({ party, title, children, isPool = false, onRemove }: {
+                    party: string; title: string; children: React.ReactNode; isPool?: boolean; onRemove?: () => void
+                  }) => (
+                    <div
+                      onDragOver={e => { e.preventDefault(); setDragOverParty(party) }}
+                      onDragLeave={() => setDragOverParty(prev => prev === party ? null : prev)}
+                      onDrop={() => handleDrop(party)}
+                      style={{
+                        padding: '10px 12px', borderRadius: 8, minHeight: 90,
+                        background: dragOverParty === party ? 'rgba(201,168,76,0.10)' : 'var(--bg-700)',
+                        border: `1.5px ${dragOverParty === party ? 'dashed var(--accent)' : 'solid var(--border)'}`,
+                        transition: 'background 0.15s, border-color 0.15s',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between',
+                        alignItems: 'center', marginBottom: 8 }}>
+                        <span style={{ fontWeight: 700, fontSize: 12,
+                          color: isPool ? 'var(--text-muted)' : 'var(--accent)' }}>
+                          {title}
+                        </span>
+                        {onRemove && (
+                          <button onClick={onRemove}
+                            style={{ background: 'none', border: 'none', color: 'var(--text-muted)',
+                              cursor: 'pointer', display: 'flex', padding: 2 }}>
+                            <Trash2 size={11} />
+                          </button>
+                        )}
+                      </div>
+                      {children}
+                    </div>
+                  )
+
+                  return (
+                    <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 14, alignItems: 'start' }}>
+                      {/* Pool de não alocados */}
+                      <DropBox party="" title={`Não alocados (${poolMembers.length})`} isPool>
+                        {poolMembers.length === 0 ? (
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Todos alocados ✓</div>
+                        ) : (
+                          poolMembers.map(c => <Chip key={c.id} c={c} />)
+                        )}
+                      </DropBox>
+
+                      {/* Partys */}
+                      <div style={{ display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
+                        {partyNames.map(name => {
+                          const members = checkins.filter(c => assignments[c.nick_mudomix] === name)
+                          return (
+                            <DropBox
+                              key={name}
+                              party={name}
+                              title={`⚔️ ${name} (${members.length})`}
+                              onRemove={() => {
                                 if (!confirm(`Remover ${name}?`)) return
                                 setPartyNames(prev => prev.filter(n => n !== name))
                                 setAssignments(prev => {
@@ -439,26 +473,21 @@ export function WorldBoss() {
                                   return copy
                                 })
                               }}
-                              style={{ background: 'none', border: 'none', color: 'var(--text-muted)',
-                                cursor: 'pointer', display: 'flex', padding: 2 }}>
-                              <Trash2 size={11} />
-                            </button>
-                          </div>
-                        </div>
-                        {members.length === 0 ? (
-                          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Vazia</div>
-                        ) : (
-                          members.map(m => (
-                            <div key={m.nick_mudomix} style={{ fontSize: 11, color: 'var(--text-secondary)',
-                              padding: '1px 0' }}>
-                              {m.nick_mudomix}
-                            </div>
-                          ))
-                        )}
+                            >
+                              {members.length === 0 ? (
+                                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                  Arraste membros aqui
+                                </div>
+                              ) : (
+                                members.map(c => <Chip key={c.id} c={c} />)
+                              )}
+                            </DropBox>
+                          )
+                        })}
                       </div>
-                    )
-                  })}
-                </div>
+                    </div>
+                  )
+                })()}
               </div>
             )}
           </>
