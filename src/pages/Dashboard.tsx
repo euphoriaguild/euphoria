@@ -16,7 +16,7 @@ const CLASS_LABELS: Record<string, string> = {
   'BK': 'Blade Knight',
   'DL': 'Dark Lord',
   'MG': 'Magic Gladiator',
-  'SM': 'Summoner',
+  'SM': 'Soul Master',
 }
 
 export function Dashboard() {

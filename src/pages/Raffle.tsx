@@ -22,6 +22,9 @@ export function Raffle() {
   const [rotation, setRotation] = useState(0)
   const [history, setHistory] = useState<RaffleHistoryEntry[]>([])
   const [historyLoading, setHistoryLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [hasMore, setHasMore] = useState(true)
+  const HISTORY_PAGE = 20
   const [spinDuration, setSpinDuration] = useState(5)
   const [newPrize, setNewPrize] = useState('')
   const [busy, setBusy] = useState(false)
@@ -43,11 +46,27 @@ export function Raffle() {
 
   useEffect(() => {
     loadActive()
-    api.getRaffleHistory()
-      .then(data => setHistory(data))
+    api.getRaffleHistory(HISTORY_PAGE, 0)
+      .then(data => {
+        setHistory(data)
+        setHasMore(data.length === HISTORY_PAGE)
+      })
       .catch(() => {})
       .finally(() => setHistoryLoading(false))
   }, [loadActive])
+
+  async function loadMoreHistory() {
+    setLoadingMore(true)
+    try {
+      const data = await api.getRaffleHistory(HISTORY_PAGE, history.length)
+      setHistory(prev => [...prev, ...data])
+      setHasMore(data.length === HISTORY_PAGE)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   // Polling a cada 8s para ver novos participantes (só quando não está girando)
   useEffect(() => {
@@ -201,8 +220,8 @@ export function Raffle() {
         setWinner(w)
         // Registra vencedor e fecha o sorteio no backend
         api.drawRaffle(w)
-          .then(() => api.getRaffleHistory())
-          .then(data => setHistory(data))
+          .then(() => api.getRaffleHistory(HISTORY_PAGE, 0))
+          .then(data => { setHistory(data); setHasMore(data.length === HISTORY_PAGE) })
           .then(() => loadActive())
           .catch(() => {})
       }
@@ -426,31 +445,43 @@ export function Raffle() {
         <div className="card" style={{ marginTop: 24 }}>
           <div className="card-header">
             <span className="card-title">Histórico de sorteios</span>
+            {!historyLoading && history.length > 0 && (
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{history.length} registros</span>
+            )}
           </div>
           {historyLoading ? (
             <div className="loading" style={{ padding: '16px 0' }}><div className="spinner" /> Carregando...</div>
           ) : history.length === 0 ? (
             <p style={{ fontSize: 13, color: 'var(--text-muted)', padding: '10px 0' }}>Nenhum sorteio registrado ainda.</p>
           ) : (
-            <div className="table-wrap">
-              <table>
-                <thead><tr><th>Data</th><th>Item</th><th>Vencedor</th><th>Participantes</th></tr></thead>
-                <tbody>
-                  {history.map(h => (
-                    <tr key={h.id}>
-                      <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', fontSize: 12 }}>
-                        {new Date(h.created_at).toLocaleString('pt-BR')}
-                      </td>
-                      <td style={{ fontWeight: 500 }}>
-                        {h.prize === '—' ? <em style={{ color: 'var(--text-muted)' }}>sem item</em> : h.prize}
-                      </td>
-                      <td style={{ color: 'var(--accent)', fontWeight: 700 }}>{h.winner_nick}</td>
-                      <td style={{ color: 'var(--text-muted)', fontSize: 12, maxWidth: 280 }}>{h.participants.join(', ')}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Data</th><th>Item</th><th>Vencedor</th><th>Participantes</th></tr></thead>
+                  <tbody>
+                    {history.map(h => (
+                      <tr key={h.id}>
+                        <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap', fontSize: 12 }}>
+                          {new Date(h.created_at).toLocaleString('pt-BR')}
+                        </td>
+                        <td style={{ fontWeight: 500 }}>
+                          {h.prize === '—' ? <em style={{ color: 'var(--text-muted)' }}>sem item</em> : h.prize}
+                        </td>
+                        <td style={{ color: 'var(--accent)', fontWeight: 700 }}>{h.winner_nick}</td>
+                        <td style={{ color: 'var(--text-muted)', fontSize: 12, maxWidth: 280 }}>{h.participants.join(', ')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {hasMore && (
+                <div style={{ textAlign: 'center', marginTop: 14 }}>
+                  <button className="btn btn-ghost" onClick={loadMoreHistory} disabled={loadingMore}>
+                    {loadingMore ? 'Carregando...' : 'Carregar mais'}
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

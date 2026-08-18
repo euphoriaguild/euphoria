@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Trophy, Swords,
-  Dice5, Globe, User, Coins, ClipboardList, LogOut,
+  Dice5, Globe, Coins, ClipboardList, LogOut,
 } from 'lucide-react'
 import { useClerk, useUser } from '@clerk/clerk-react'
 import { useAuth } from '../contexts/AuthContext'
@@ -74,11 +74,6 @@ export function Sidebar() {
         <NavLink to="/doacoes" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
           <Coins />
           Doações
-        </NavLink>
-
-        <NavLink to="/perfil" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
-          <User />
-          Buscar Perfil
         </NavLink>
 
         {/* Staff only */}

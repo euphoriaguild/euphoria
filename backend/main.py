@@ -371,13 +371,22 @@ async def save_profile(
 # ── Raffle ────────────────────────────────────────────────────
 
 @app.get("/api/raffle/history")
-async def get_raffle_history(_user: dict = Depends(require_auth)):
-    """Retorna os últimos 20 sorteios."""
+async def get_raffle_history(
+    limit: int = 20,
+    offset: int = 0,
+    _user: dict = Depends(require_auth),
+):
+    """Retorna o histórico de sorteios (paginado)."""
+    limit = max(1, min(limit, 200))
     async with httpx.AsyncClient() as client:
         resp = await client.get(
             f"{SUPABASE_URL}/rest/v1/raffle_history",
             headers=supabase_headers(),
-            params={"order": "created_at.desc", "limit": "20"},
+            params={
+                "order": "created_at.desc",
+                "limit": str(limit),
+                "offset": str(offset),
+            },
         )
         if resp.status_code >= 400:
             return []

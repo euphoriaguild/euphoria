@@ -63,7 +63,7 @@ class ClassSelectView(discord.ui.View):
             discord.SelectOption(label="BK", value="BK", description="Blade Knight / Blade Master"),
             discord.SelectOption(label="DL", value="DL", description="Dark Lord / Lord Emperor"),
             discord.SelectOption(label="MG", value="MG", description="Magic Gladiator / Duel Master"),
-            discord.SelectOption(label="SM", value="SM", description="Summoner / Dimension Master"),
+            discord.SelectOption(label="SM", value="SM", description="Soul Master / Grand Master"),
         ]
 
         select = discord.ui.Select(placeholder="Selecione sua classe...", options=options)

@@ -101,7 +101,8 @@ export const api = {
   refresh: () => apiFetch('/api/refresh', { method: 'POST' }),
 
   // Raffle
-  getRaffleHistory: () => apiFetch<RaffleHistoryEntry[]>('/api/raffle/history'),
+  getRaffleHistory: (limit = 20, offset = 0) =>
+    apiFetch<RaffleHistoryEntry[]>(`/api/raffle/history?limit=${limit}&offset=${offset}`),
   saveRaffle: (item: string, winner: string, participants: string[]) =>
     apiFetch<RaffleHistoryEntry>('/api/raffle/save', { method: 'POST', body: JSON.stringify({ item, winner, participants }) }),
 
