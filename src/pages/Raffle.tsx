@@ -28,6 +28,8 @@ export function Raffle() {
   const [spinDuration, setSpinDuration] = useState(5)
   const [newPrize, setNewPrize] = useState('')
   const [busy, setBusy] = useState(false)
+  const [editingPrize, setEditingPrize] = useState(false)
+  const [editPrizeInput, setEditPrizeInput] = useState('')
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   const raffle = active?.raffle ?? null
@@ -149,6 +151,34 @@ export function Raffle() {
       await loadActive()
     } catch (e: any) {
       alert(e?.message || 'Erro ao criar sorteio')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleEditPrize() {
+    if (!editPrizeInput.trim()) { alert('Informe o prêmio.'); return }
+    setBusy(true)
+    try {
+      await api.editRaffle(editPrizeInput.trim())
+      setEditingPrize(false)
+      await loadActive()
+    } catch (e: any) {
+      alert(e?.message || 'Erro ao editar prêmio')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleClose() {
+    if (!confirm('Fechar o sorteio atual sem sortear vencedor?')) return
+    setBusy(true)
+    try {
+      await api.closeRaffle()
+      setWinner(null)
+      await loadActive()
+    } catch (e: any) {
+      alert(e?.message || 'Erro ao fechar sorteio')
     } finally {
       setBusy(false)
     }
@@ -293,12 +323,46 @@ export function Raffle() {
               </div>
               {raffle ? (
                 <>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--accent)', marginBottom: 6 }}>
-                    {raffle.prize}
-                  </div>
+                  {editingPrize ? (
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                      <input
+                        value={editPrizeInput}
+                        onChange={e => setEditPrizeInput(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && handleEditPrize()}
+                        autoFocus
+                        style={{
+                          flex: 1, padding: '6px 8px', background: 'var(--bg-700)',
+                          border: '1px solid var(--accent)', borderRadius: 6,
+                          color: 'var(--text-primary)', fontSize: 13, outline: 'none',
+                        }}
+                      />
+                      <button className="btn btn-primary" style={{ padding: '6px 10px' }}
+                        onClick={handleEditPrize} disabled={busy}>✓</button>
+                      <button className="btn btn-ghost" style={{ padding: '6px 10px' }}
+                        onClick={() => setEditingPrize(false)}>✕</button>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--accent)', marginBottom: 6 }}>
+                      {raffle.prize}
+                    </div>
+                  )}
                   <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 14 }}>
                     {participants.length} participante{participants.length !== 1 ? 's' : ''}
                   </div>
+
+                  {/* Ações do staff: editar prêmio / fechar */}
+                  {isStaff && !editingPrize && (
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+                      <button className="btn btn-ghost" style={{ flex: 1, justifyContent: 'center', fontSize: 12 }}
+                        onClick={() => { setEditPrizeInput(raffle.prize); setEditingPrize(true) }} disabled={busy}>
+                        Editar prêmio
+                      </button>
+                      <button className="btn btn-danger" style={{ flex: 1, justifyContent: 'center', fontSize: 12 }}
+                        onClick={handleClose} disabled={busy}>
+                        Fechar sorteio
+                      </button>
+                    </div>
+                  )}
 
                   {/* Botão participar / sair (todos) */}
                   {profile?.nick_mudomix ? (

@@ -134,6 +134,9 @@ export const api = {
   getActiveRaffle: () => apiFetch<ActiveRaffle>('/api/raffle/active'),
   createRaffle: (prize: string) =>
     apiFetch<RaffleData>('/api/raffle/create', { method: 'POST', body: JSON.stringify({ prize }) }),
+  editRaffle: (prize: string) =>
+    apiFetch('/api/raffle/edit', { method: 'POST', body: JSON.stringify({ prize }) }),
+  closeRaffle: () => apiFetch('/api/raffle/close', { method: 'POST' }),
   joinRaffle: () => apiFetch<{ ok: boolean; nick: string }>('/api/raffle/join', { method: 'POST' }),
   leaveRaffle: () => apiFetch('/api/raffle/leave', { method: 'POST' }),
   drawRaffle: (winner: string) =>

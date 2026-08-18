@@ -914,6 +914,53 @@ async def create_raffle(body: RaffleCreatePayload, user: dict = Depends(require_
     return data[0] if isinstance(data, list) and data else {"ok": True}
 
 
+@app.post("/api/raffle/edit")
+async def edit_raffle(body: RaffleCreatePayload, user: dict = Depends(require_auth)):
+    """Staff edita o prêmio do sorteio ativo."""
+    clerk_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        me = await _get_requester_profile(client, clerk_id)
+        _require_staff(me)
+
+        r = await client.get(
+            f"{SUPABASE_URL}/rest/v1/raffles",
+            headers=supabase_headers(),
+            params={"status": "eq.open", "select": "id", "order": "created_at.desc", "limit": "1"},
+        )
+        raffles = r.json() if r.status_code == 200 else []
+        if not raffles:
+            raise HTTPException(status_code=400, detail="Nenhum sorteio aberto para editar.")
+
+        resp = await client.patch(
+            f"{SUPABASE_URL}/rest/v1/raffles",
+            headers=supabase_headers(),
+            params={"id": f"eq.{raffles[0]['id']}"},
+            json={"prize": body.prize},
+        )
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=500, detail=resp.text)
+    return {"ok": True}
+
+
+@app.post("/api/raffle/close")
+async def close_raffle(user: dict = Depends(require_auth)):
+    """Staff fecha/cancela o sorteio ativo sem sortear vencedor."""
+    clerk_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        me = await _get_requester_profile(client, clerk_id)
+        _require_staff(me)
+
+        resp = await client.patch(
+            f"{SUPABASE_URL}/rest/v1/raffles",
+            headers=supabase_headers(),
+            params={"status": "eq.open"},
+            json={"status": "closed"},
+        )
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=500, detail=resp.text)
+    return {"ok": True}
+
+
 @app.post("/api/raffle/join")
 async def join_raffle(user: dict = Depends(require_auth)):
     """Usuário logado entra no sorteio ativo com o PRÓPRIO nick."""
