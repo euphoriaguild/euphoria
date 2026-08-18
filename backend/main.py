@@ -696,3 +696,93 @@ async def approve_profile(
             raise HTTPException(status_code=500, detail=resp.text)
 
     return {"ok": True}
+
+
+# ── Update Member (Admin) ─────────────────────────────────────────────────────
+
+class UpdateMemberPayload(BaseModel):
+    nick_mudomix: str
+    char_class: Optional[str] = None
+    resets: Optional[int] = None
+    level: Optional[int] = None
+
+
+@app.patch("/api/members/{nick}")
+async def update_member(
+    nick: str,
+    body: UpdateMemberPayload,
+    user: dict = Depends(require_auth),
+):
+    """Atualiza dados de um membro (staff/admin only)."""
+    requester_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        check = await client.get(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            headers=supabase_headers(),
+            params={"clerk_id": f"eq.{requester_id}", "select": "role"},
+        )
+        rows = check.json()
+        if not rows or rows[0].get("role") not in ("staff", "admin"):
+            raise HTTPException(status_code=403, detail="Acesso restrito a staff")
+
+        update_data: dict = {}
+        if body.char_class is not None:
+            update_data["char_class"] = body.char_class
+        if body.resets is not None:
+            update_data["resets"] = body.resets
+        if body.level is not None:
+            update_data["level"] = body.level
+
+        if not update_data:
+            raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
+
+        resp = await client.patch(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            headers=supabase_headers(),
+            params={"nick_mudomix": f"eq.{nick}"},
+            json=update_data,
+        )
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=500, detail=resp.text)
+
+    return {"ok": True}
+
+
+@app.get("/api/members/all/admin")
+async def get_all_members_admin(
+    user: dict = Depends(require_auth),
+):
+    """Lista TODOS os membros (incluindo pending) para staff/admin."""
+    requester_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        check = await client.get(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            headers=supabase_headers(),
+            params={"clerk_id": f"eq.{requester_id}", "select": "role"},
+        )
+        rows = check.json()
+        if not rows or rows[0].get("role") not in ("staff", "admin"):
+            raise HTTPException(status_code=403, detail="Acesso restrito a staff")
+
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            headers=supabase_headers(),
+            params={
+                "select": "nick_mudomix,char_class,resets,level,role,discord_username,approved_at",
+                "order": "nick_mudomix.asc",
+            },
+        )
+        profiles = resp.json() if resp.status_code == 200 else []
+
+    return [
+        {
+            "name": p["nick_mudomix"],
+            "char_class": p.get("char_class") or "",
+            "resets": p.get("resets") or 0,
+            "level": p.get("level") or 0,
+            "role": p.get("role") or "pending",
+            "discord": p.get("discord_username") or "",
+            "approved": p.get("approved_at") is not None,
+        }
+        for p in profiles
+    ]

@@ -64,7 +64,6 @@ export function Pending() {
               </div>
               <Row label="Discord" value={profile.discord_username ?? '—'} />
               <Row label="Nick MU" value={profile.nick_mudomix ?? '(não informado)'} />
-              <Row label="Guilda" value={profile.guild ?? '(não informada)'} />
               <Row label="Status" value="Pendente" valueColor="var(--accent)" />
             </div>
           )}

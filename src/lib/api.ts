@@ -123,6 +123,11 @@ export const api = {
   getPendingMembers: () => apiFetch<PendingMember[]>('/api/profile/pending'),
   approveProfile: (clerk_id: string, role: string) =>
     apiFetch('/api/profile/approve', { method: 'POST', body: JSON.stringify({ clerk_id, role }) }),
+
+  // Admin — gerenciar membros
+  getAllMembersAdmin: () => apiFetch<AdminMember[]>('/api/members/all/admin'),
+  updateMember: (nick: string, data: { char_class?: string; resets?: number; level?: number }) =>
+    apiFetch(`/api/members/${encodeURIComponent(nick)}`, { method: 'PATCH', body: JSON.stringify({ nick_mudomix: nick, ...data }) }),
 }
 
 export interface RaffleHistoryEntry {
@@ -181,4 +186,14 @@ export interface PendingMember {
   nick_mudomix: string | null
   guild: string | null
   created_at: string
+}
+
+export interface AdminMember {
+  name: string
+  char_class: string
+  resets: number
+  level: number
+  role: string
+  discord: string
+  approved: boolean
 }

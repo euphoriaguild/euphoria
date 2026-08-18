@@ -1,46 +1,48 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Search } from 'lucide-react'
-import { api, type GuildMember } from '../lib/api'
+import { Search, Edit2, Check, X } from 'lucide-react'
+import { api, type AdminMember } from '../lib/api'
+import { useAuth } from '../contexts/AuthContext'
 
 const CLASS_COLORS: Record<string, string> = {
-  'Blade Knight': 'class-bk',
-  'Soul Master': 'class-sm',
-  'Muse Elf': 'class-me',
-  'Dark Lord': 'class-dl',
-  'Magic Gladiator': 'class-mg',
-  'Dark Wizard': 'class-dw',
-  'Fairy Elf': 'class-me',
+  'ELF': 'class-me',
+  'BK': 'class-bk',
+  'DL': 'class-dl',
+  'MG': 'class-mg',
+  'SM': 'class-sm',
 }
 
-const GUILD_COLORS: Record<string, string> = {
-  Euphoria: 'guild-euphoria',
-  Euphor1a: 'guild-euphor1a',
-  Jackson5: 'guild-jackson5',
-  HellBoyz: 'guild-hellboyz',
-}
+const CLASSES = ['ELF', 'BK', 'DL', 'MG', 'SM']
 
 const SORT_OPTIONS = [
   { value: 'resets', label: 'Resets' },
   { value: 'level', label: 'Level' },
   { value: 'name', label: 'Nome' },
-  { value: 'guild', label: 'Guilda' },
   { value: 'char_class', label: 'Classe' },
 ]
 
 export function Members() {
-  const [members, setMembers] = useState<GuildMember[]>([])
+  const { profile } = useAuth()
+  const isStaff = profile?.role === 'staff' || profile?.role === 'admin'
+
+  const [members, setMembers] = useState<AdminMember[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState('resets')
   const [order, setOrder] = useState<'asc' | 'desc'>('desc')
-  const [guildFilter, setGuildFilter] = useState('all')
   const [classFilter, setClassFilter] = useState('all')
+
+  // Edição
+  const [editingNick, setEditingNick] = useState<string | null>(null)
+  const [editClass, setEditClass] = useState('')
+  const [saving, setSaving] = useState(false)
 
   async function load() {
     setLoading(true)
     try {
-      const data = await api.getAllMembers(sortBy, order)
+      const data = isStaff
+        ? await api.getAllMembersAdmin()
+        : await api.getAllMembers(sortBy, order) as unknown as AdminMember[]
       setMembers(data)
     } catch (e) {
       console.error(e)
@@ -49,17 +51,54 @@ export function Members() {
     }
   }
 
-  useEffect(() => { load() }, [sortBy, order])
+  useEffect(() => { load() }, [sortBy, order, isStaff])
 
-  const guilds = Array.from(new Set(members.map(m => m.guild))).sort()
-  const classes = Array.from(new Set(members.map(m => m.char_class))).sort()
+  const classes = Array.from(new Set(members.map(m => m.char_class).filter(Boolean))).sort()
 
   const filtered = members.filter(m => {
-    const matchSearch = m.name.toLowerCase().includes(search.toLowerCase())
-    const matchGuild = guildFilter === 'all' || m.guild === guildFilter
+    const matchSearch = m.name?.toLowerCase().includes(search.toLowerCase())
     const matchClass = classFilter === 'all' || m.char_class === classFilter
-    return matchSearch && matchGuild && matchClass
+    return matchSearch && matchClass
   })
+
+  // Ordena localmente se não for staff (staff já vem ordenado por nick)
+  const sorted = isStaff
+    ? [...filtered].sort((a, b) => {
+        if (sortBy === 'resets') return order === 'desc' ? b.resets - a.resets : a.resets - b.resets
+        if (sortBy === 'level') return order === 'desc' ? b.level - a.level : a.level - b.level
+        if (sortBy === 'name') return order === 'desc' ? b.name.localeCompare(a.name) : a.name.localeCompare(b.name)
+        if (sortBy === 'char_class') return order === 'desc' ? b.char_class.localeCompare(a.char_class) : a.char_class.localeCompare(b.char_class)
+        return 0
+      })
+    : filtered
+
+  function startEdit(nick: string, currentClass: string) {
+    setEditingNick(nick)
+    setEditClass(currentClass || 'ELF')
+  }
+
+  function cancelEdit() {
+    setEditingNick(null)
+    setEditClass('')
+  }
+
+  async function saveEdit() {
+    if (!editingNick) return
+    setSaving(true)
+    try {
+      await api.updateMember(editingNick, { char_class: editClass })
+      setMembers(prev =>
+        prev.map(m => m.name === editingNick ? { ...m, char_class: editClass } : m)
+      )
+      setEditingNick(null)
+      setEditClass('')
+    } catch (e) {
+      console.error(e)
+      alert('Erro ao salvar')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <>
@@ -92,20 +131,6 @@ export function Members() {
                 }}
               />
             </div>
-
-            {/* Guilda */}
-            <select
-              value={guildFilter}
-              onChange={e => setGuildFilter(e.target.value)}
-              style={{
-                padding: '8px 12px', background: 'var(--bg-700)',
-                border: '1px solid var(--border)', borderRadius: 6,
-                color: 'var(--text-primary)', fontSize: 13,
-              }}
-            >
-              <option value="all">Todas as guildas</option>
-              {guilds.map(g => <option key={g} value={g}>{g}</option>)}
-            </select>
 
             {/* Classe */}
             <select
@@ -154,30 +179,78 @@ export function Members() {
                   <th>#</th>
                   <th>Personagem</th>
                   <th>Classe</th>
-                  <th>Guilda</th>
                   <th>Resets</th>
                   <th>Level</th>
-                  <th>Cargo</th>
+                  {isStaff && <th>Status</th>}
+                  {isStaff && <th>Ações</th>}
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((m, i) => (
-                  <tr key={`${m.name}-${m.guild}`}>
+                {sorted.map((m, i) => (
+                  <tr key={`${m.name}`}>
                     <td><span className="rank-pos">{i + 1}</span></td>
                     <td>
                       <Link to={`/perfil/${m.name}`} style={{ color: 'var(--text-primary)', fontWeight: 500 }}>
                         {m.name}
                       </Link>
                     </td>
-                    <td className={CLASS_COLORS[m.char_class] ?? ''}>{m.char_class}</td>
-                    <td className={GUILD_COLORS[m.guild] ?? ''}>{m.guild}</td>
+                    <td>
+                      {editingNick === m.name ? (
+                        <select
+                          value={editClass}
+                          onChange={e => setEditClass(e.target.value)}
+                          style={{
+                            padding: '4px 8px', background: 'var(--bg-700)',
+                            border: '1px solid var(--accent)', borderRadius: 4,
+                            color: 'var(--text-primary)', fontSize: 12,
+                          }}
+                        >
+                          {CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      ) : (
+                        <span className={CLASS_COLORS[m.char_class] ?? ''}>{m.char_class || '—'}</span>
+                      )}
+                    </td>
                     <td style={{ color: 'var(--accent)', fontWeight: 600 }}>{m.resets}</td>
                     <td>{m.level}</td>
-                    <td>
-                      <span className={`badge ${m.member_level === 'Master' ? 'badge-master' : 'badge-member'}`}>
-                        {m.member_level}
-                      </span>
-                    </td>
+                    {isStaff && (
+                      <td>
+                        <span className={`badge ${m.approved ? 'badge-member' : 'badge-pending'}`}>
+                          {m.approved ? m.role : 'Pendente'}
+                        </span>
+                      </td>
+                    )}
+                    {isStaff && (
+                      <td>
+                        {editingNick === m.name ? (
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <button
+                              className="btn btn-ghost"
+                              onClick={saveEdit}
+                              disabled={saving}
+                              style={{ padding: '4px 8px' }}
+                            >
+                              <Check size={14} />
+                            </button>
+                            <button
+                              className="btn btn-ghost"
+                              onClick={cancelEdit}
+                              style={{ padding: '4px 8px' }}
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            className="btn btn-ghost"
+                            onClick={() => startEdit(m.name, m.char_class)}
+                            style={{ padding: '4px 8px' }}
+                          >
+                            <Edit2 size={14} />
+                          </button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

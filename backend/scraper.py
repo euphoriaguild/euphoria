@@ -7,7 +7,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://mudomix.com"
-ALLIANCE_GUILDS = ["Euphoria", "Euphor1a", "Jackson5", "HellBoyz"]
+
+# LEGACY: Múltiplas guildas removidas — agora só existe "Euphoria"
+ALLIANCE_GUILDS = ["Euphoria"]
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

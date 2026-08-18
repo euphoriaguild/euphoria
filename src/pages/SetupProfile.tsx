@@ -4,14 +4,11 @@ import { useUser } from '@clerk/clerk-react'
 import { useAuth } from '../contexts/AuthContext'
 import { api } from '../lib/api'
 
-const GUILDS = ['Euphoria', 'Euphor1a', 'Jackson5', 'HellBoyz']
-
 export function SetupProfile() {
   const { user } = useUser()
   const { profile, refreshProfile } = useAuth()
   const navigate = useNavigate()
   const [nick, setNick] = useState(profile?.nick_mudomix ?? '')
-  const [guild, setGuild] = useState(profile?.guild ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -23,7 +20,7 @@ export function SetupProfile() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!nick.trim() || !guild) { setError('Preencha todos os campos.'); return }
+    if (!nick.trim()) { setError('Preencha o nick.'); return }
 
     setSaving(true)
     setError('')
@@ -31,7 +28,7 @@ export function SetupProfile() {
     try {
       await api.saveProfile({
         nick_mudomix: nick.trim(),
-        guild,
+        guild: 'Euphoria', // Guilda fixa
         discord_username: discordUsername ?? undefined,
         discord_id: discordId ?? undefined,
         avatar_url: avatarUrl ?? undefined,
@@ -59,7 +56,7 @@ export function SetupProfile() {
           }}>EUPHORIA</div>
           <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 8 }}>Complete seu perfil</h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>
-            Informe seu nick no MU Domix e sua guilda para solicitar aprovação.
+            Informe seu nick no MU Domix para solicitar aprovação.
           </p>
         </div>
 
@@ -83,7 +80,7 @@ export function SetupProfile() {
           )}
 
           <form onSubmit={handleSubmit}>
-            <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 24 }}>
               <label style={{ display: 'block', fontSize: 12, fontWeight: 600,
                 color: 'var(--text-secondary)', marginBottom: 6, textTransform: 'uppercase',
                 letterSpacing: 1 }}>
@@ -106,32 +103,6 @@ export function SetupProfile() {
               <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
                 Exatamente como aparece no perfil do mudomix.com
               </p>
-            </div>
-
-            <div style={{ marginBottom: 24 }}>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 600,
-                color: 'var(--text-secondary)', marginBottom: 6, textTransform: 'uppercase',
-                letterSpacing: 1 }}>
-                Sua Guilda
-              </label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                {GUILDS.map(g => (
-                  <button
-                    key={g}
-                    type="button"
-                    onClick={() => setGuild(g)}
-                    style={{
-                      padding: '10px', borderRadius: 6, fontSize: 13, fontWeight: 600,
-                      border: `1px solid ${guild === g ? 'var(--accent)' : 'var(--border)'}`,
-                      background: guild === g ? 'rgba(201,168,76,0.12)' : 'var(--bg-700)',
-                      color: guild === g ? 'var(--accent)' : 'var(--text-secondary)',
-                      transition: 'all 0.15s',
-                    }}
-                  >
-                    {g}
-                  </button>
-                ))}
-              </div>
             </div>
 
             {error && (
