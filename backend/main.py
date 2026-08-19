@@ -610,8 +610,9 @@ async def get_worldboss_checkins(
             return []
         checkins = resp.json()
 
-        # Enriquece com a classe atual do perfil (check-ins antigos podem não ter char_class)
-        nicks = [c["nick_mudomix"] for c in checkins if not c.get("char_class")]
+        # Sempre usa a classe ATUAL do perfil (fonte de verdade), pois a staff
+        # pode ter editado a classe depois do check-in.
+        nicks = [c["nick_mudomix"] for c in checkins]
         if nicks:
             in_list = ",".join(f'"{n}"' for n in nicks)
             pr = await client.get(
@@ -627,8 +628,9 @@ async def get_worldboss_checkins(
                 for p in (pr.json() if pr.status_code == 200 else [])
             }
             for c in checkins:
-                if not c.get("char_class"):
-                    c["char_class"] = class_map.get(c["nick_mudomix"])
+                current = class_map.get(c["nick_mudomix"])
+                if current:
+                    c["char_class"] = current
     return checkins
 
 
