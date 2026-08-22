@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Trash2, Eye, EyeOff, Users, X } from 'lucide-react'
+import { Plus, Trash2, Eye, EyeOff, Users, X, Pencil, Check } from 'lucide-react'
 import { api, type AltEntry, type AdminMember } from '../lib/api'
 import { useAuth } from '../contexts/AuthContext'
 
@@ -123,6 +123,11 @@ export function Alts() {
   const [addingAltFor, setAddingAltFor] = useState<string | null>(null)
   const [addAltValue, setAddAltValue] = useState('')
 
+  // Editar alt existente
+  const [editingAltId, setEditingAltId] = useState<number | null>(null)
+  const [editAltNick, setEditAltNick] = useState('')
+  const [editAltNotes, setEditAltNotes] = useState('')
+
   async function load() {
     setLoading(true)
     try {
@@ -140,10 +145,9 @@ export function Alts() {
 
   useEffect(() => {
     load()
-    if (isStaff) {
-      api.getAllMembersAdmin().then(setMembers).catch(() => {})
-    }
-  }, [isStaff])
+    // Carrega membros para autocomplete (staff e membros podem editar)
+    api.getAllMembersAdmin().then(setMembers).catch(() => {})
+  }, [])
 
   const groups = useMemo(() => buildGroups(entries), [entries])
 
@@ -209,6 +213,31 @@ export function Alts() {
       await load()
     } catch (e: any) {
       alert(e?.message || 'Erro ao remover')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function startEditAlt(r: AltEntry) {
+    setEditingAltId(r.id)
+    setEditAltNick(r.alt_nick ?? '')
+    setEditAltNotes(r.notes ?? '')
+  }
+
+  async function handleSaveEditAlt() {
+    if (editingAltId === null) return
+    setBusy(true)
+    try {
+      await api.updateAlt(editingAltId, {
+        alt_nick: editAltNick.trim() || undefined,
+        notes: editAltNotes.trim() || undefined,
+      })
+      setEditingAltId(null)
+      setEditAltNick('')
+      setEditAltNotes('')
+      await load()
+    } catch (e: any) {
+      alert(e?.message || 'Erro ao atualizar')
     } finally {
       setBusy(false)
     }
@@ -283,11 +312,10 @@ export function Alts() {
           </div>
         )}
 
-        {/* Staff: cadastro */}
-        {isStaff && (
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
-              <button
+        {/* Formulário de cadastro - disponível para todos os membros */}
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+            <button
                 onClick={() => setFormSide('euphoria')}
                 className={formSide === 'euphoria' ? 'btn btn-primary' : 'btn btn-ghost'}
                 style={{ fontSize: 12 }}
@@ -370,7 +398,6 @@ export function Alts() {
               </div>
             )}
           </div>
-        )}
 
         {/* Filtros */}
         <div className="card" style={{ marginBottom: 16 }}>
@@ -429,12 +456,10 @@ export function Alts() {
                         )}
                       </div>
                     </div>
-                    {isStaff && (
-                      <button onClick={() => handleRemoveGroup(g)} disabled={busy}
-                        style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 2 }}>
-                        <Trash2 size={13} />
-                      </button>
-                    )}
+                    <button onClick={() => handleRemoveGroup(g)} disabled={busy}
+                      style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 2 }}>
+                      <Trash2 size={13} />
+                    </button>
                   </div>
 
                   {/* Lista de alts */}
@@ -445,55 +470,92 @@ export function Alts() {
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
                       {g.rows.map(r => (
-                        <div key={r.id} style={{
-                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                          padding: '4px 8px', background: 'var(--bg-700)', borderRadius: 5, fontSize: 12,
-                        }}>
-                          <span>{r.alt_nick}</span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            {r.notes && <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>{r.notes}</span>}
-                            {isStaff && (
+                        editingAltId === r.id ? (
+                          <div key={r.id} style={{
+                            display: 'flex', alignItems: 'center', gap: 4,
+                            padding: '4px 8px', background: 'var(--bg-700)', borderRadius: 5,
+                          }}>
+                            <input
+                              value={editAltNick}
+                              onChange={e => setEditAltNick(e.target.value)}
+                              placeholder="Nick"
+                              autoFocus
+                              style={{
+                                flex: 1, padding: '4px 6px', background: 'var(--bg-800)',
+                                border: '1px solid var(--accent)', borderRadius: 4,
+                                color: 'var(--text-primary)', fontSize: 11, outline: 'none',
+                              }}
+                            />
+                            <input
+                              value={editAltNotes}
+                              onChange={e => setEditAltNotes(e.target.value)}
+                              placeholder="Obs"
+                              style={{
+                                width: 70, padding: '4px 6px', background: 'var(--bg-800)',
+                                border: '1px solid var(--border)', borderRadius: 4,
+                                color: 'var(--text-muted)', fontSize: 10, outline: 'none',
+                              }}
+                            />
+                            <button onClick={handleSaveEditAlt} disabled={busy}
+                              style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 2 }}>
+                              <Check size={12} />
+                            </button>
+                            <button onClick={() => setEditingAltId(null)}
+                              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 2 }}>
+                              <X size={12} />
+                            </button>
+                          </div>
+                        ) : (
+                          <div key={r.id} style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            padding: '4px 8px', background: 'var(--bg-700)', borderRadius: 5, fontSize: 12,
+                          }}>
+                            <span>{r.alt_nick}</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              {r.notes && <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>{r.notes}</span>}
+                              <button onClick={() => startEditAlt(r)} disabled={busy}
+                                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 0 }}>
+                                <Pencil size={11} />
+                              </button>
                               <button onClick={() => handleRemoveAlt(r.id)} disabled={busy}
                                 style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 0 }}>
                                 <X size={12} />
                               </button>
-                            )}
+                            </div>
                           </div>
-                        </div>
+                        )
                       ))}
                     </div>
                   )}
 
                   {/* Adicionar conta ao grupo */}
-                  {isStaff && (
-                    addingAltFor === key ? (
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        {g.side === 'euphoria' ? (
-                          <AutocompleteInput value={addAltValue} onChange={setAddAltValue} suggestions={members} placeholder="Nick do alt" />
-                        ) : (
-                          <input
-                            value={addAltValue}
-                            onChange={e => setAddAltValue(e.target.value)}
-                            placeholder="Nick do alt"
-                            autoFocus
-                            style={{
-                              flex: 1, padding: '6px 8px', background: 'var(--bg-700)',
-                              border: '1px solid var(--accent)', borderRadius: 6,
-                              color: 'var(--text-primary)', fontSize: 12, outline: 'none',
-                            }}
-                          />
-                        )}
-                        <button className="btn btn-primary" style={{ padding: '6px 10px', fontSize: 12 }}
-                          onClick={() => handleAddAlt(g)} disabled={busy}>+</button>
-                        <button className="btn btn-ghost" style={{ padding: '6px 10px', fontSize: 12 }}
-                          onClick={() => { setAddingAltFor(null); setAddAltValue('') }}>✕</button>
-                      </div>
-                    ) : (
-                      <button className="btn btn-ghost" style={{ fontSize: 11, padding: '4px 10px', width: '100%', justifyContent: 'center' }}
-                        onClick={() => { setAddingAltFor(key); setAddAltValue('') }}>
-                        <Plus size={11} /> Adicionar conta
-                      </button>
-                    )
+                  {addingAltFor === key ? (
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      {g.side === 'euphoria' ? (
+                        <AutocompleteInput value={addAltValue} onChange={setAddAltValue} suggestions={members} placeholder="Nick do alt" />
+                      ) : (
+                        <input
+                          value={addAltValue}
+                          onChange={e => setAddAltValue(e.target.value)}
+                          placeholder="Nick do alt"
+                          autoFocus
+                          style={{
+                            flex: 1, padding: '6px 8px', background: 'var(--bg-700)',
+                            border: '1px solid var(--accent)', borderRadius: 6,
+                            color: 'var(--text-primary)', fontSize: 12, outline: 'none',
+                          }}
+                        />
+                      )}
+                      <button className="btn btn-primary" style={{ padding: '6px 10px', fontSize: 12 }}
+                        onClick={() => handleAddAlt(g)} disabled={busy}>+</button>
+                      <button className="btn btn-ghost" style={{ padding: '6px 10px', fontSize: 12 }}
+                        onClick={() => { setAddingAltFor(null); setAddAltValue('') }}>✕</button>
+                    </div>
+                  ) : (
+                    <button className="btn btn-ghost" style={{ fontSize: 11, padding: '4px 10px', width: '100%', justifyContent: 'center' }}
+                      onClick={() => { setAddingAltFor(key); setAddAltValue('') }}>
+                      <Plus size={11} /> Adicionar conta
+                    </button>
                   )}
                 </div>
               )
