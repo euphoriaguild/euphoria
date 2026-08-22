@@ -342,7 +342,7 @@ export function Alts() {
                   A lista completa de contas está visível apenas para a staff. Você pode cadastrar e gerenciar suas próprias contas abaixo.
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8, lineHeight: 1.5 }}>
-                  <strong>Precisa de ajuda?</strong> Procure as lideranças: <span style={{ color: 'var(--accent-primary)' }}>Weliz</span>, <span style={{ color: 'var(--accent-primary)' }}>MARLBORO</span>, <span style={{ color: 'var(--accent-primary)' }}>zkv1rus</span> ou <span style={{ color: 'var(--accent-primary)' }}>pacheco</span>.
+                  <strong>Precisa de ajuda?</strong> Procure as lideranças: <span style={{ color: 'var(--accent-primary)' }}>Weliz</span>, <span style={{ color: 'var(--accent-primary)' }}>MARLBORO</span>, <span style={{ color: 'var(--accent-primary)' }}>zkv1rus</span>, <span style={{ color: 'var(--accent-primary)' }}>Arquina</span>, <span style={{ color: 'var(--accent-primary)' }}>MarinhasRN</span>, <span style={{ color: 'var(--accent-primary)' }}>pacheco</span>, <span style={{ color: 'var(--accent-primary)' }}>S4mCro</span> ou <span style={{ color: 'var(--accent-primary)' }}>gug4ofps</span>.
                 </div>
               </div>
             </div>
