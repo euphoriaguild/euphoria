@@ -1259,27 +1259,34 @@ async def set_alts_visibility(body: AltsVisibilityPayload, user: dict = Depends(
 
 @app.get("/api/alts")
 async def list_alts(user: dict = Depends(require_auth)):
-    """Lista contas/alts. Staff sempre vê; membros aprovados só se a visibilidade estiver liberada."""
+    """Lista contas/alts. Staff sempre vê tudo; membros veem tudo se liberado, senão só suas próprias."""
     clerk_id = user.get("sub")
     async with httpx.AsyncClient() as client:
         me = await _get_requester_profile(client, clerk_id)
+        my_nick = me.get("nick_mudomix")
         is_staff = me.get("role") in ("staff", "admin")
         is_approved = me.get("approved_at") is not None
         visible = await _get_alts_visibility(client)
 
-        # Staff sempre pode ver
-        # Membros aprovados podem ver se a visibilidade estiver liberada
-        if not is_staff:
-            if not is_approved:
-                raise HTTPException(status_code=403, detail="Apenas membros aprovados podem acessar.")
-            if not visible:
-                raise HTTPException(status_code=403, detail="Lista de alts visível apenas para a staff.")
+        if not is_staff and not is_approved:
+            raise HTTPException(status_code=403, detail="Apenas membros aprovados podem acessar.")
 
-        resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/alt_accounts",
-            headers=supabase_headers(),
-            params={"select": "*", "order": "main_nick.asc"},
-        )
+        # Se não é staff e não está liberado, retorna apenas as contas do próprio membro
+        restricted_mode = not is_staff and not visible
+
+        if restricted_mode:
+            # Apenas as contas onde o main_nick é o nick do membro logado
+            resp = await client.get(
+                f"{SUPABASE_URL}/rest/v1/alt_accounts",
+                headers=supabase_headers(),
+                params={"select": "*", "main_nick": f"ilike.{my_nick}", "side": "eq.euphoria", "order": "main_nick.asc"},
+            )
+        else:
+            resp = await client.get(
+                f"{SUPABASE_URL}/rest/v1/alt_accounts",
+                headers=supabase_headers(),
+                params={"select": "*", "order": "main_nick.asc"},
+            )
         entries = resp.json() if resp.status_code == 200 else []
 
         # Para o lado "euphoria", a classe da main vem sempre do perfil atual
@@ -1300,7 +1307,13 @@ async def list_alts(user: dict = Depends(require_auth)):
                 if e.get("side") == "euphoria":
                     e["main_class"] = class_map.get(e["main_nick"]) or e.get("main_class")
 
-    return {"visible_to_members": visible, "is_staff": is_staff, "entries": entries}
+    return {
+        "visible_to_members": visible,
+        "is_staff": is_staff,
+        "restricted_mode": restricted_mode,
+        "my_nick": my_nick,
+        "entries": entries,
+    }
 
 
 @app.post("/api/alts")
@@ -1310,9 +1323,20 @@ async def create_alt(body: AltCreatePayload, user: dict = Depends(require_auth))
     async with httpx.AsyncClient() as client:
         me = await _get_requester_profile(client, clerk_id)
         _require_member(me)
+        my_nick = me.get("nick_mudomix")
+        is_staff = me.get("role") in ("staff", "admin")
+        visible = await _get_alts_visibility(client)
+        restricted_mode = not is_staff and not visible
 
         if body.side not in ("euphoria", "blacklist"):
             raise HTTPException(status_code=400, detail="side deve ser 'euphoria' ou 'blacklist'")
+
+        # Em modo restrito, membro só pode adicionar suas próprias contas (side euphoria)
+        if restricted_mode:
+            if body.side == "blacklist":
+                raise HTTPException(status_code=403, detail="Apenas staff pode adicionar à blacklist quando a lista está restrita.")
+            if body.main_nick.strip().lower() != my_nick.lower():
+                raise HTTPException(status_code=403, detail="Você só pode adicionar contas vinculadas ao seu próprio nick.")
 
         alt_nick = body.alt_nick.strip() if body.alt_nick and body.alt_nick.strip() else None
 
@@ -1357,6 +1381,24 @@ async def update_alt(alt_id: int, body: AltUpdatePayload, user: dict = Depends(r
     async with httpx.AsyncClient() as client:
         me = await _get_requester_profile(client, clerk_id)
         _require_member(me)
+        my_nick = me.get("nick_mudomix")
+        is_staff = me.get("role") in ("staff", "admin")
+        visible = await _get_alts_visibility(client)
+        restricted_mode = not is_staff and not visible
+
+        # Verifica se o alt pertence ao membro em modo restrito
+        if restricted_mode:
+            check = await client.get(
+                f"{SUPABASE_URL}/rest/v1/alt_accounts",
+                headers=supabase_headers(),
+                params={"id": f"eq.{alt_id}", "select": "main_nick,side"},
+            )
+            alt_rows = check.json() if check.status_code == 200 else []
+            if not alt_rows:
+                raise HTTPException(status_code=404, detail="Alt não encontrado")
+            alt = alt_rows[0]
+            if alt.get("side") == "blacklist" or alt.get("main_nick", "").lower() != my_nick.lower():
+                raise HTTPException(status_code=403, detail="Você só pode editar suas próprias contas.")
 
         update_data = {k: v for k, v in body.model_dump().items() if v is not None}
         if "side" in update_data and update_data["side"] not in ("euphoria", "blacklist"):
@@ -1382,6 +1424,25 @@ async def delete_alt(alt_id: int, user: dict = Depends(require_auth)):
     async with httpx.AsyncClient() as client:
         me = await _get_requester_profile(client, clerk_id)
         _require_member(me)
+        my_nick = me.get("nick_mudomix")
+        is_staff = me.get("role") in ("staff", "admin")
+        visible = await _get_alts_visibility(client)
+        restricted_mode = not is_staff and not visible
+
+        # Verifica se o alt pertence ao membro em modo restrito
+        if restricted_mode:
+            check = await client.get(
+                f"{SUPABASE_URL}/rest/v1/alt_accounts",
+                headers=supabase_headers(),
+                params={"id": f"eq.{alt_id}", "select": "main_nick,side"},
+            )
+            alt_rows = check.json() if check.status_code == 200 else []
+            if not alt_rows:
+                raise HTTPException(status_code=404, detail="Alt não encontrado")
+            alt = alt_rows[0]
+            if alt.get("side") == "blacklist" or alt.get("main_nick", "").lower() != my_nick.lower():
+                raise HTTPException(status_code=403, detail="Você só pode remover suas próprias contas.")
+
         resp = await client.delete(
             f"{SUPABASE_URL}/rest/v1/alt_accounts",
             headers=supabase_headers(),

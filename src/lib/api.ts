@@ -188,6 +188,8 @@ export interface AltEntry {
 export interface AltsData {
   visible_to_members: boolean
   is_staff: boolean
+  restricted_mode: boolean
+  my_nick: string | null
   entries: AltEntry[]
 }
 

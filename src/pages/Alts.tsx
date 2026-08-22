@@ -106,6 +106,8 @@ export function Alts() {
   const [entries, setEntries] = useState<AltEntry[]>([])
   const [members, setMembers] = useState<AdminMember[]>([])
   const [visibleToMembers, setVisibleToMembers] = useState(false)
+  const [restrictedMode, setRestrictedMode] = useState(false)
+  const [myNick, setMyNick] = useState<string | null>(null)
   const [allowed, setAllowed] = useState(true)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -137,6 +139,8 @@ export function Alts() {
       const data = await api.getAlts()
       setEntries(data.entries)
       setVisibleToMembers(data.visible_to_members)
+      setRestrictedMode(data.restricted_mode ?? false)
+      setMyNick(data.my_nick ?? null)
       setAllowed(true)
       // Atualiza o modal se estiver aberto
       if (selectedGroup) {
@@ -171,11 +175,13 @@ export function Alts() {
   })
 
   async function handleCreate() {
-    if (!mainNick.trim()) { alert('Informe a conta principal.'); return }
+    // Em modo restrito, usa o nick do membro logado
+    const nickToUse = restrictedMode && myNick ? myNick : mainNick.trim()
+    if (!nickToUse) { alert('Informe a conta principal.'); return }
     setBusy(true)
     try {
       await api.createAlt({
-        main_nick: mainNick.trim(),
+        main_nick: nickToUse,
         alt_nick: altNick.trim() || undefined,
         side: formSide,
         main_class: formSide === 'blacklist' ? mainClass : undefined,
@@ -311,7 +317,7 @@ export function Alts() {
                 <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                   {visibleToMembers
                     ? 'Todos os membros aprovados podem ver esta lista.'
-                    : 'Apenas staff/admin podem ver esta lista no momento.'}
+                    : 'Apenas staff/admin podem ver esta lista no momento. Membros só veem suas próprias contas.'}
                 </div>
               </div>
               <button className="btn btn-ghost" onClick={toggleVisibility} disabled={busy}
@@ -319,6 +325,26 @@ export function Alts() {
                 {visibleToMembers ? <Eye size={14} /> : <EyeOff size={14} />}
                 {visibleToMembers ? 'Liberado' : 'Restrito à staff'}
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Aviso para membros em modo restrito */}
+        {restrictedMode && !isStaff && (
+          <div className="card" style={{ marginBottom: 16, background: 'var(--bg-800)', border: '1px solid var(--accent-yellow)', borderLeft: '4px solid var(--accent-yellow)' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+              <EyeOff size={20} style={{ color: 'var(--accent-yellow)', marginTop: 2, flexShrink: 0 }} />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, color: 'var(--accent-yellow)' }}>
+                  Lista restrita no momento
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                  A lista completa de contas está visível apenas para a staff. Você pode cadastrar e gerenciar suas próprias contas abaixo.
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8, lineHeight: 1.5 }}>
+                  <strong>Precisa de ajuda?</strong> Procure as lideranças: <span style={{ color: 'var(--accent-primary)' }}>Weliz</span>, <span style={{ color: 'var(--accent-primary)' }}>pacheco</span>, <span style={{ color: 'var(--accent-primary)' }}>Alezin</span> ou <span style={{ color: 'var(--accent-primary)' }}>ka0z</span>.
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -333,18 +359,34 @@ export function Alts() {
               >
                 + Nossa Guilda
               </button>
-              <button
-                onClick={() => setFormSide('blacklist')}
-                className={formSide === 'blacklist' ? 'btn btn-primary' : 'btn btn-ghost'}
-                style={{ fontSize: 12 }}
-              >
-                + Blacklist
-              </button>
+              {/* Botão de blacklist só aparece quando não está em modo restrito */}
+              {!restrictedMode && (
+                <button
+                  onClick={() => setFormSide('blacklist')}
+                  className={formSide === 'blacklist' ? 'btn btn-primary' : 'btn btn-ghost'}
+                  style={{ fontSize: 12 }}
+                >
+                  + Blacklist
+                </button>
+              )}
             </div>
 
             {formSide === 'euphoria' ? (
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <AutocompleteInput value={mainNick} onChange={setMainNick} suggestions={members} placeholder="Conta principal (nick de membro)" />
+                {/* Em modo restrito, o nick da main é fixo no nick do membro logado */}
+                {restrictedMode && myNick ? (
+                  <input
+                    value={myNick}
+                    disabled
+                    style={{
+                      flex: '1 1 160px', padding: '8px 10px', background: 'var(--bg-800)',
+                      border: '1px solid var(--border)', borderRadius: 6,
+                      color: 'var(--text-muted)', fontSize: 13, outline: 'none',
+                    }}
+                  />
+                ) : (
+                  <AutocompleteInput value={mainNick} onChange={setMainNick} suggestions={members} placeholder="Conta principal (nick de membro)" />
+                )}
                 <AutocompleteInput value={altNick} onChange={setAltNick} suggestions={members} placeholder="Nick do alt (opcional)" />
                 <input
                   value={notes}
