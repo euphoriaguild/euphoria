@@ -1332,8 +1332,12 @@ async def create_alt(body: AltCreatePayload, user: dict = Depends(require_auth))
             detail = resp.text
             if "main_class" in detail and "schema cache" in detail:
                 detail += (
-                    " | Ação: rode 'NOTIFY pgrst, reload schema;' no SQL Editor do "
-                    "Supabase, ou reinicie o projeto em Project Settings > General > Restart project."
+                    " | Ação: a coluna 'main_class' provavelmente não existe de fato na tabela. "
+                    "Rode no SQL Editor do Supabase: "
+                    "SELECT column_name FROM information_schema.columns WHERE table_name='alt_accounts'; "
+                    "Se 'main_class' não aparecer, rode: "
+                    "ALTER TABLE alt_accounts ADD COLUMN IF NOT EXISTS main_class TEXT; "
+                    "seguido de: NOTIFY pgrst, 'reload schema';"
                 )
             raise HTTPException(status_code=500, detail=detail)
         data = resp.json()
