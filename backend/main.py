@@ -1184,3 +1184,153 @@ async def toggle_donation(body: DonationTogglePayload, user: dict = Depends(requ
                 params={"week_start": f"eq.{week}", "nick_mudomix": f"eq.{body.nick_mudomix}"},
             )
     return {"ok": True}
+
+
+# ── Contas & Alts (espionagem/organização de alts) ───────────────────────────
+
+class AltCreatePayload(BaseModel):
+    main_nick: str
+    alt_nick: str
+    side: str = "euphoria"  # "euphoria" | "enemy"
+    notes: Optional[str] = None
+
+
+class AltUpdatePayload(BaseModel):
+    main_nick: Optional[str] = None
+    alt_nick: Optional[str] = None
+    side: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class AltsVisibilityPayload(BaseModel):
+    visible_to_members: bool
+
+
+async def _get_alts_visibility(client: httpx.AsyncClient) -> bool:
+    r = await client.get(
+        f"{SUPABASE_URL}/rest/v1/alts_config",
+        headers=supabase_headers(),
+        params={"select": "visible_to_members", "order": "id.desc", "limit": "1"},
+    )
+    rows = r.json() if r.status_code == 200 else []
+    return bool(rows[0]["visible_to_members"]) if rows else False
+
+
+@app.get("/api/alts/visibility")
+async def get_alts_visibility(user: dict = Depends(require_auth)):
+    """Retorna se a lista de alts está visível para membros comuns (qualquer autenticado pode checar)."""
+    clerk_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        me = await _get_requester_profile(client, clerk_id)
+        is_staff = me.get("role") in ("staff", "admin")
+        visible = await _get_alts_visibility(client)
+    return {"visible_to_members": visible, "is_staff": is_staff}
+
+
+@app.post("/api/alts/visibility")
+async def set_alts_visibility(body: AltsVisibilityPayload, user: dict = Depends(require_auth)):
+    """Staff decide se os membros comuns podem ver a lista de alts."""
+    clerk_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        me = await _get_requester_profile(client, clerk_id)
+        _require_staff(me)
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/alts_config",
+            headers={**supabase_headers(), "Prefer": "return=representation"},
+            json={"visible_to_members": body.visible_to_members, "updated_by": clerk_id},
+        )
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=500, detail=resp.text)
+    return {"ok": True}
+
+
+@app.get("/api/alts")
+async def list_alts(user: dict = Depends(require_auth)):
+    """Lista contas/alts. Staff sempre vê; membros só se a visibilidade estiver liberada."""
+    clerk_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        me = await _get_requester_profile(client, clerk_id)
+        is_staff = me.get("role") in ("staff", "admin")
+        visible = await _get_alts_visibility(client)
+
+        if not is_staff and not visible:
+            raise HTTPException(status_code=403, detail="Lista de alts visível apenas para a staff.")
+
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/alt_accounts",
+            headers=supabase_headers(),
+            params={"select": "*", "order": "main_nick.asc"},
+        )
+        entries = resp.json() if resp.status_code == 200 else []
+
+    return {"visible_to_members": visible, "is_staff": is_staff, "entries": entries}
+
+
+@app.post("/api/alts")
+async def create_alt(body: AltCreatePayload, user: dict = Depends(require_auth)):
+    """Staff cadastra uma conta alt vinculada a um jogador."""
+    clerk_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        me = await _get_requester_profile(client, clerk_id)
+        _require_staff(me)
+
+        if body.side not in ("euphoria", "enemy"):
+            raise HTTPException(status_code=400, detail="side deve ser 'euphoria' ou 'enemy'")
+
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/alt_accounts",
+            headers={**supabase_headers(), "Prefer": "return=representation"},
+            json={
+                "main_nick": body.main_nick.strip(),
+                "alt_nick": body.alt_nick.strip(),
+                "side": body.side,
+                "notes": body.notes,
+                "created_by": me.get("nick_mudomix"),
+            },
+        )
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=500, detail=resp.text)
+        data = resp.json()
+    return data[0] if isinstance(data, list) and data else {"ok": True}
+
+
+@app.patch("/api/alts/{alt_id}")
+async def update_alt(alt_id: int, body: AltUpdatePayload, user: dict = Depends(require_auth)):
+    """Staff edita uma conta/alt existente."""
+    clerk_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        me = await _get_requester_profile(client, clerk_id)
+        _require_staff(me)
+
+        update_data = {k: v for k, v in body.model_dump().items() if v is not None}
+        if "side" in update_data and update_data["side"] not in ("euphoria", "enemy"):
+            raise HTTPException(status_code=400, detail="side deve ser 'euphoria' ou 'enemy'")
+        if not update_data:
+            raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
+
+        resp = await client.patch(
+            f"{SUPABASE_URL}/rest/v1/alt_accounts",
+            headers=supabase_headers(),
+            params={"id": f"eq.{alt_id}"},
+            json=update_data,
+        )
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=500, detail=resp.text)
+    return {"ok": True}
+
+
+@app.delete("/api/alts/{alt_id}")
+async def delete_alt(alt_id: int, user: dict = Depends(require_auth)):
+    """Staff remove uma conta/alt."""
+    clerk_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        me = await _get_requester_profile(client, clerk_id)
+        _require_staff(me)
+        resp = await client.delete(
+            f"{SUPABASE_URL}/rest/v1/alt_accounts",
+            headers=supabase_headers(),
+            params={"id": f"eq.{alt_id}"},
+        )
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=500, detail=resp.text)
+    return {"ok": True}

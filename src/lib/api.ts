@@ -148,6 +148,39 @@ export const api = {
     apiFetch('/api/donations/config', { method: 'POST', body: JSON.stringify({ weekly_amount }) }),
   toggleDonation: (nick_mudomix: string, paid: boolean) =>
     apiFetch('/api/donations/toggle', { method: 'POST', body: JSON.stringify({ nick_mudomix, paid }) }),
+
+  // Contas & Alts
+  getAltsVisibility: () => apiFetch<AltsVisibility>('/api/alts/visibility'),
+  setAltsVisibility: (visible_to_members: boolean) =>
+    apiFetch('/api/alts/visibility', { method: 'POST', body: JSON.stringify({ visible_to_members }) }),
+  getAlts: () => apiFetch<AltsData>('/api/alts'),
+  createAlt: (data: { main_nick: string; alt_nick: string; side: 'euphoria' | 'enemy'; notes?: string }) =>
+    apiFetch<AltEntry>('/api/alts', { method: 'POST', body: JSON.stringify(data) }),
+  updateAlt: (id: number, data: Partial<{ main_nick: string; alt_nick: string; side: 'euphoria' | 'enemy'; notes: string }>) =>
+    apiFetch(`/api/alts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteAlt: (id: number) =>
+    apiFetch(`/api/alts/${id}`, { method: 'DELETE' }),
+}
+
+export interface AltsVisibility {
+  visible_to_members: boolean
+  is_staff: boolean
+}
+
+export interface AltEntry {
+  id: number
+  main_nick: string
+  alt_nick: string
+  side: 'euphoria' | 'enemy'
+  notes: string | null
+  created_by: string | null
+  created_at: string
+}
+
+export interface AltsData {
+  visible_to_members: boolean
+  is_staff: boolean
+  entries: AltEntry[]
 }
 
 export interface RaffleData {

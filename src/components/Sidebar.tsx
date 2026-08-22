@@ -1,10 +1,12 @@
 import { NavLink } from 'react-router-dom'
+import { useEffect, useState } from 'react'
 import {
   LayoutDashboard, Users, Trophy, Swords,
-  Dice5, Globe, Coins, ClipboardList, LogOut,
+  Dice5, Globe, Coins, ClipboardList, LogOut, UserSearch,
 } from 'lucide-react'
 import { useClerk, useUser } from '@clerk/clerk-react'
 import { useAuth } from '../contexts/AuthContext'
+import { api } from '../lib/api'
 
 const ROLE_LABELS: Record<string, string> = {
   admin: 'Admin',
@@ -17,6 +19,16 @@ export function Sidebar() {
   const { profile, isStaff } = useAuth()
   const { user } = useUser()
   const { signOut } = useClerk()
+  const [altsVisible, setAltsVisible] = useState(false)
+
+  useEffect(() => {
+    if (isStaff) return // staff sempre vê, não precisa checar
+    api.getAltsVisibility()
+      .then(d => setAltsVisible(d.visible_to_members))
+      .catch(() => {})
+  }, [isStaff])
+
+  const canSeeAlts = isStaff || altsVisible
 
   // Discord username via Clerk
   const discordAccount = user?.externalAccounts?.find(a => a.provider === 'discord')
@@ -75,6 +87,13 @@ export function Sidebar() {
           <Coins />
           Doações
         </NavLink>
+
+        {canSeeAlts && (
+          <NavLink to="/contas-alts" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <UserSearch />
+            Contas &amp; Alts
+          </NavLink>
+        )}
 
         {/* Staff only */}
         {isStaff && (
