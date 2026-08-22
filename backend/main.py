@@ -1310,20 +1310,32 @@ async def create_alt(body: AltCreatePayload, user: dict = Depends(require_auth))
 
         alt_nick = body.alt_nick.strip() if body.alt_nick and body.alt_nick.strip() else None
 
+        payload: dict = {
+            "main_nick": body.main_nick.strip(),
+            "alt_nick": alt_nick,
+            "side": body.side,
+            "notes": body.notes,
+            "created_by": me.get("nick_mudomix"),
+        }
+        # Só envia main_class quando realmente foi informado — evita quebrar o
+        # cadastro "Nossa Guilda" (que não usa esse campo) caso o cache de
+        # schema do Supabase ainda não tenha sido atualizado após o ALTER TABLE.
+        if body.main_class is not None:
+            payload["main_class"] = body.main_class
+
         resp = await client.post(
             f"{SUPABASE_URL}/rest/v1/alt_accounts",
             headers={**supabase_headers(), "Prefer": "return=representation"},
-            json={
-                "main_nick": body.main_nick.strip(),
-                "alt_nick": alt_nick,
-                "side": body.side,
-                "main_class": body.main_class,
-                "notes": body.notes,
-                "created_by": me.get("nick_mudomix"),
-            },
+            json=payload,
         )
         if resp.status_code >= 400:
-            raise HTTPException(status_code=500, detail=resp.text)
+            detail = resp.text
+            if "main_class" in detail and "schema cache" in detail:
+                detail += (
+                    " | Ação: rode 'NOTIFY pgrst, reload schema;' no SQL Editor do "
+                    "Supabase, ou reinicie o projeto em Project Settings > General > Restart project."
+                )
+            raise HTTPException(status_code=500, detail=detail)
         data = resp.json()
     return data[0] if isinstance(data, list) and data else {"ok": True}
 
