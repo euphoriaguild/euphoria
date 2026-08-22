@@ -1259,15 +1259,21 @@ async def set_alts_visibility(body: AltsVisibilityPayload, user: dict = Depends(
 
 @app.get("/api/alts")
 async def list_alts(user: dict = Depends(require_auth)):
-    """Lista contas/alts. Staff sempre vê; membros só se a visibilidade estiver liberada."""
+    """Lista contas/alts. Staff sempre vê; membros aprovados só se a visibilidade estiver liberada."""
     clerk_id = user.get("sub")
     async with httpx.AsyncClient() as client:
         me = await _get_requester_profile(client, clerk_id)
         is_staff = me.get("role") in ("staff", "admin")
+        is_approved = me.get("approved_at") is not None
         visible = await _get_alts_visibility(client)
 
-        if not is_staff and not visible:
-            raise HTTPException(status_code=403, detail="Lista de alts visível apenas para a staff.")
+        # Staff sempre pode ver
+        # Membros aprovados podem ver se a visibilidade estiver liberada
+        if not is_staff:
+            if not is_approved:
+                raise HTTPException(status_code=403, detail="Apenas membros aprovados podem acessar.")
+            if not visible:
+                raise HTTPException(status_code=403, detail="Lista de alts visível apenas para a staff.")
 
         resp = await client.get(
             f"{SUPABASE_URL}/rest/v1/alt_accounts",
