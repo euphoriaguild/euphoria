@@ -128,6 +128,9 @@ export function Alts() {
   const [editAltNick, setEditAltNick] = useState('')
   const [editAltNotes, setEditAltNotes] = useState('')
 
+  // Modal de detalhes
+  const [selectedGroup, setSelectedGroup] = useState<AltGroup | null>(null)
+
   async function load() {
     setLoading(true)
     try {
@@ -135,6 +138,13 @@ export function Alts() {
       setEntries(data.entries)
       setVisibleToMembers(data.visible_to_members)
       setAllowed(true)
+      // Atualiza o modal se estiver aberto
+      if (selectedGroup) {
+        const newGroups = buildGroups(data.entries)
+        const key = `${selectedGroup.side}::${selectedGroup.mainNick.toLowerCase()}`
+        const updated = newGroups.find(g => `${g.side}::${g.mainNick.toLowerCase()}` === key)
+        setSelectedGroup(updated ?? null)
+      }
     } catch (e: any) {
       if (e?.message?.includes('403')) setAllowed(false)
       console.error(e)
@@ -248,6 +258,7 @@ export function Alts() {
     setBusy(true)
     try {
       await Promise.all(group.allIds.map(id => api.deleteAlt(id)))
+      setSelectedGroup(null)
       await load()
     } catch (e: any) {
       alert(e?.message || 'Erro ao remover')
@@ -433,136 +444,206 @@ export function Alts() {
         ) : filteredGroups.length === 0 ? (
           <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Nenhum registro encontrado.</p>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10 }}>
             {filteredGroups.map(g => {
               const key = `${g.side}::${g.mainNick}`
               return (
-                <div key={key} className="card" style={{ padding: '12px 14px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: 14 }}>{g.mainNick}</div>
-                      <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center' }}>
-                        <span style={{
-                          fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
-                          color: g.side === 'euphoria' ? 'var(--accent)' : 'var(--red)',
-                          background: g.side === 'euphoria' ? 'rgba(201,168,76,0.12)' : 'rgba(229,62,62,0.12)',
-                        }}>
-                          {SIDE_LABELS[g.side]}
-                        </span>
-                        {g.mainClass && (
-                          <span className={CLASS_COLORS[g.mainClass] ?? ''} style={{ fontSize: 11 }}>
-                            {g.mainClass}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <button onClick={() => handleRemoveGroup(g)} disabled={busy}
-                      style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 2 }}>
-                      <Trash2 size={13} />
-                    </button>
+                <div
+                  key={key}
+                  className="card"
+                  onClick={() => setSelectedGroup(g)}
+                  style={{
+                    padding: '10px 12px', cursor: 'pointer',
+                    transition: 'transform 0.1s, box-shadow 0.1s',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)' }}
+                  onMouseLeave={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = '' }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>{g.mainNick}</div>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span style={{
+                      fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+                      color: g.side === 'euphoria' ? 'var(--accent)' : 'var(--red)',
+                      background: g.side === 'euphoria' ? 'rgba(201,168,76,0.12)' : 'rgba(229,62,62,0.12)',
+                    }}>
+                      {SIDE_LABELS[g.side]}
+                    </span>
+                    {g.mainClass && (
+                      <span className={CLASS_COLORS[g.mainClass] ?? ''} style={{ fontSize: 10 }}>
+                        {g.mainClass}
+                      </span>
+                    )}
+                    {g.rows.length > 0 && (
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                        {g.rows.length} alt{g.rows.length !== 1 ? 's' : ''}
+                      </span>
+                    )}
                   </div>
-
-                  {/* Lista de alts */}
-                  {g.rows.length === 0 ? (
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
-                      Nenhuma conta vinculada ainda.
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
-                      {g.rows.map(r => (
-                        editingAltId === r.id ? (
-                          <div key={r.id} style={{
-                            display: 'flex', alignItems: 'center', gap: 4,
-                            padding: '4px 8px', background: 'var(--bg-700)', borderRadius: 5,
-                          }}>
-                            <input
-                              value={editAltNick}
-                              onChange={e => setEditAltNick(e.target.value)}
-                              placeholder="Nick"
-                              autoFocus
-                              style={{
-                                flex: 1, padding: '4px 6px', background: 'var(--bg-800)',
-                                border: '1px solid var(--accent)', borderRadius: 4,
-                                color: 'var(--text-primary)', fontSize: 11, outline: 'none',
-                              }}
-                            />
-                            <input
-                              value={editAltNotes}
-                              onChange={e => setEditAltNotes(e.target.value)}
-                              placeholder="Obs"
-                              style={{
-                                width: 70, padding: '4px 6px', background: 'var(--bg-800)',
-                                border: '1px solid var(--border)', borderRadius: 4,
-                                color: 'var(--text-muted)', fontSize: 10, outline: 'none',
-                              }}
-                            />
-                            <button onClick={handleSaveEditAlt} disabled={busy}
-                              style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 2 }}>
-                              <Check size={12} />
-                            </button>
-                            <button onClick={() => setEditingAltId(null)}
-                              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 2 }}>
-                              <X size={12} />
-                            </button>
-                          </div>
-                        ) : (
-                          <div key={r.id} style={{
-                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            padding: '4px 8px', background: 'var(--bg-700)', borderRadius: 5, fontSize: 12,
-                          }}>
-                            <span>{r.alt_nick}</span>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              {r.notes && <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>{r.notes}</span>}
-                              <button onClick={() => startEditAlt(r)} disabled={busy}
-                                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 0 }}>
-                                <Pencil size={11} />
-                              </button>
-                              <button onClick={() => handleRemoveAlt(r.id)} disabled={busy}
-                                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 0 }}>
-                                <X size={12} />
-                              </button>
-                            </div>
-                          </div>
-                        )
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Adicionar conta ao grupo */}
-                  {addingAltFor === key ? (
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      {g.side === 'euphoria' ? (
-                        <AutocompleteInput value={addAltValue} onChange={setAddAltValue} suggestions={members} placeholder="Nick do alt" />
-                      ) : (
-                        <input
-                          value={addAltValue}
-                          onChange={e => setAddAltValue(e.target.value)}
-                          placeholder="Nick do alt"
-                          autoFocus
-                          style={{
-                            flex: 1, padding: '6px 8px', background: 'var(--bg-700)',
-                            border: '1px solid var(--accent)', borderRadius: 6,
-                            color: 'var(--text-primary)', fontSize: 12, outline: 'none',
-                          }}
-                        />
-                      )}
-                      <button className="btn btn-primary" style={{ padding: '6px 10px', fontSize: 12 }}
-                        onClick={() => handleAddAlt(g)} disabled={busy}>+</button>
-                      <button className="btn btn-ghost" style={{ padding: '6px 10px', fontSize: 12 }}
-                        onClick={() => { setAddingAltFor(null); setAddAltValue('') }}>✕</button>
-                    </div>
-                  ) : (
-                    <button className="btn btn-ghost" style={{ fontSize: 11, padding: '4px 10px', width: '100%', justifyContent: 'center' }}
-                      onClick={() => { setAddingAltFor(key); setAddAltValue('') }}>
-                      <Plus size={11} /> Adicionar conta
-                    </button>
-                  )}
                 </div>
               )
             })}
           </div>
         )}
       </div>
+
+      {/* Modal de detalhes */}
+      {selectedGroup && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
+          }}
+          onClick={() => { setSelectedGroup(null); setAddingAltFor(null); setEditingAltId(null) }}
+        >
+          <div
+            className="card"
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: '100%', maxWidth: 480, maxHeight: '80vh', overflow: 'auto',
+              padding: 20, position: 'relative',
+            }}
+          >
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 18 }}>{selectedGroup.mainNick}</div>
+                <div style={{ display: 'flex', gap: 8, marginTop: 6, alignItems: 'center' }}>
+                  <span style={{
+                    fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 4,
+                    color: selectedGroup.side === 'euphoria' ? 'var(--accent)' : 'var(--red)',
+                    background: selectedGroup.side === 'euphoria' ? 'rgba(201,168,76,0.12)' : 'rgba(229,62,62,0.12)',
+                  }}>
+                    {SIDE_LABELS[selectedGroup.side]}
+                  </span>
+                  {selectedGroup.mainClass && (
+                    <span className={CLASS_COLORS[selectedGroup.mainClass] ?? ''} style={{ fontSize: 12 }}>
+                      {selectedGroup.mainClass}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => handleRemoveGroup(selectedGroup)} disabled={busy}
+                  style={{ background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer', padding: 4 }}>
+                  <Trash2 size={16} />
+                </button>
+                <button onClick={() => { setSelectedGroup(null); setAddingAltFor(null); setEditingAltId(null) }}
+                  style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4 }}>
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            {/* Lista de alts */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, fontWeight: 600 }}>
+                Contas vinculadas ({selectedGroup.rows.length})
+              </div>
+              {selectedGroup.rows.length === 0 ? (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '12px 0' }}>
+                  Nenhuma conta vinculada ainda.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {selectedGroup.rows.map(r => (
+                    editingAltId === r.id ? (
+                      <div key={r.id} style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        padding: '8px 10px', background: 'var(--bg-700)', borderRadius: 6,
+                      }}>
+                        <input
+                          value={editAltNick}
+                          onChange={e => setEditAltNick(e.target.value)}
+                          placeholder="Nick"
+                          autoFocus
+                          style={{
+                            flex: 1, padding: '6px 8px', background: 'var(--bg-800)',
+                            border: '1px solid var(--accent)', borderRadius: 4,
+                            color: 'var(--text-primary)', fontSize: 12, outline: 'none',
+                          }}
+                        />
+                        <input
+                          value={editAltNotes}
+                          onChange={e => setEditAltNotes(e.target.value)}
+                          placeholder="Observação"
+                          style={{
+                            width: 100, padding: '6px 8px', background: 'var(--bg-800)',
+                            border: '1px solid var(--border)', borderRadius: 4,
+                            color: 'var(--text-muted)', fontSize: 11, outline: 'none',
+                          }}
+                        />
+                        <button onClick={handleSaveEditAlt} disabled={busy}
+                          style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 4 }}>
+                          <Check size={14} />
+                        </button>
+                        <button onClick={() => setEditingAltId(null)}
+                          style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4 }}>
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ) : (
+                      <div key={r.id} style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '8px 10px', background: 'var(--bg-700)', borderRadius: 6, fontSize: 13,
+                      }}>
+                        <span style={{ fontWeight: 500 }}>{r.alt_nick}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          {r.notes && <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{r.notes}</span>}
+                          <button onClick={() => startEditAlt(r)} disabled={busy}
+                            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 2 }}>
+                            <Pencil size={12} />
+                          </button>
+                          <button onClick={() => handleRemoveAlt(r.id)} disabled={busy}
+                            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 2 }}>
+                            <X size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Adicionar nova alt */}
+            {addingAltFor === `${selectedGroup.side}::${selectedGroup.mainNick}` ? (
+              <div style={{ display: 'flex', gap: 6 }}>
+                {selectedGroup.side === 'euphoria' ? (
+                  <AutocompleteInput value={addAltValue} onChange={setAddAltValue} suggestions={members} placeholder="Nick do alt" />
+                ) : (
+                  <input
+                    value={addAltValue}
+                    onChange={e => setAddAltValue(e.target.value)}
+                    placeholder="Nick do alt"
+                    autoFocus
+                    style={{
+                      flex: 1, padding: '8px 10px', background: 'var(--bg-700)',
+                      border: '1px solid var(--accent)', borderRadius: 6,
+                      color: 'var(--text-primary)', fontSize: 13, outline: 'none',
+                    }}
+                  />
+                )}
+                <button className="btn btn-primary" style={{ padding: '8px 14px' }}
+                  onClick={() => handleAddAlt(selectedGroup)} disabled={busy}>
+                  <Plus size={14} />
+                </button>
+                <button className="btn btn-ghost" style={{ padding: '8px 14px' }}
+                  onClick={() => { setAddingAltFor(null); setAddAltValue('') }}>
+                  <X size={14} />
+                </button>
+              </div>
+            ) : (
+              <button
+                className="btn btn-ghost"
+                style={{ width: '100%', justifyContent: 'center', padding: '10px' }}
+                onClick={() => { setAddingAltFor(`${selectedGroup.side}::${selectedGroup.mainNick}`); setAddAltValue('') }}
+              >
+                <Plus size={14} /> Adicionar conta
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </>
   )
 }
