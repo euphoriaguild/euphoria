@@ -1,5 +1,7 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.requests import Request
 from contextlib import asynccontextmanager
 import asyncio
 import logging
@@ -123,6 +125,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Garante que QUALQUER erro (mesmo bugs inesperados) volte como JSON com detalhe,
+    em vez do 'Internal Server Error' padrão sem corpo — assim o frontend sempre
+    consegue mostrar a mensagem real do erro."""
+    logger.exception("Erro não tratado em %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": f"Erro interno: {exc}"})
 
 
 def cache_stale(key: str, ttl: int = 300) -> bool:
