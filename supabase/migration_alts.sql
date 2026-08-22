@@ -39,3 +39,9 @@ ALTER TABLE alt_accounts ALTER COLUMN alt_nick DROP NOT NULL;
 -- Classe da main (usada na Blacklist, onde não há perfil para consultar a classe atual)
 ALTER TABLE alt_accounts ADD COLUMN IF NOT EXISTS main_class TEXT;
 
+-- IMPORTANTE: força o PostgREST (API do Supabase) a recarregar o cache do schema.
+-- Sem isso, colunas novas (main_class) podem continuar "invisíveis" pra API
+-- por um tempo mesmo após o ALTER TABLE, causando erro 500 ao inserir/atualizar.
+NOTIFY pgrst, 'reload schema';
+
+
