@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Trash2, Eye, EyeOff, Users, X, Pencil, Check } from 'lucide-react'
+import { Plus, Trash2, Eye, EyeOff, Users, X, Pencil, Check, ChevronDown, ChevronUp, Search } from 'lucide-react'
 import { api, type AltEntry, type AdminMember } from '../lib/api'
 import { useAuth } from '../contexts/AuthContext'
 
@@ -127,6 +127,9 @@ export function Alts() {
   const [editingAltId, setEditingAltId] = useState<number | null>(null)
   const [editAltNick, setEditAltNick] = useState('')
   const [editAltNotes, setEditAltNotes] = useState('')
+
+  // Controle de visualização
+  const [showAll, setShowAll] = useState(false)
 
   // Modal de detalhes
   const [selectedGroup, setSelectedGroup] = useState<AltGroup | null>(null)
@@ -413,16 +416,19 @@ export function Alts() {
         {/* Filtros */}
         <div className="card" style={{ marginBottom: 16 }}>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Buscar por nick..."
-              style={{
-                flex: 1, minWidth: 200, padding: '8px 10px', background: 'var(--bg-700)',
-                border: '1px solid var(--border)', borderRadius: 6,
-                color: 'var(--text-primary)', fontSize: 13, outline: 'none',
-              }}
-            />
+            <div style={{ position: 'relative', flex: 1, minWidth: 200 }}>
+              <Search size={16} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Buscar por nick (main ou alt)..."
+                style={{
+                  width: '100%', padding: '8px 10px 8px 34px', background: 'var(--bg-700)',
+                  border: '1px solid var(--border)', borderRadius: 6,
+                  color: 'var(--text-primary)', fontSize: 13, outline: 'none',
+                }}
+              />
+            </div>
             <select
               value={sideFilter}
               onChange={e => setSideFilter(e.target.value as 'all' | 'euphoria' | 'blacklist')}
@@ -441,10 +447,49 @@ export function Alts() {
 
         {loading ? (
           <div className="loading"><div className="spinner" /> Carregando...</div>
+        ) : search.trim() === '' && !showAll ? (
+          /* Sem busca: mostra resumo + botão para expandir */
+          <div className="card" style={{ textAlign: 'center', padding: '30px 20px' }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>🔍</div>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
+              Pesquise por um nick para ver as contas vinculadas
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
+              {groups.filter(g => g.side === 'blacklist').length} inimigos identificados • {' '}
+              {groups.filter(g => g.side === 'euphoria').length} da nossa guilda
+            </div>
+            <button
+              className="btn btn-ghost"
+              onClick={() => setShowAll(true)}
+              style={{ fontSize: 12 }}
+            >
+              <ChevronDown size={14} /> Ver todos ({groups.length})
+            </button>
+          </div>
         ) : filteredGroups.length === 0 ? (
-          <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Nenhum registro encontrado.</p>
+          <div className="card" style={{ textAlign: 'center', padding: '20px' }}>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
+              Nenhum resultado para "{search}"
+            </p>
+          </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10 }}>
+          <>
+            {/* Botão para recolher quando está mostrando todos */}
+            {showAll && search.trim() === '' && (
+              <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  Mostrando {filteredGroups.length} registro{filteredGroups.length !== 1 ? 's' : ''}
+                </span>
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => setShowAll(false)}
+                  style={{ fontSize: 11, padding: '4px 10px' }}
+                >
+                  <ChevronUp size={12} /> Recolher
+                </button>
+              </div>
+            )}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10 }}>
             {filteredGroups.map(g => {
               const key = `${g.side}::${g.mainNick}`
               return (
@@ -483,6 +528,7 @@ export function Alts() {
               )
             })}
           </div>
+          </>
         )}
       </div>
 
