@@ -184,7 +184,8 @@ export function Alts() {
         main_nick: group.mainNick,
         alt_nick: addAltValue.trim(),
         side: group.side,
-        main_class: group.mainClass ?? undefined,
+        // Para "Nossa Guilda" a classe é sempre puxada ao vivo do perfil (não precisa salvar).
+        main_class: group.side === 'blacklist' ? (group.mainClass ?? undefined) : undefined,
       })
       // Remove o placeholder "sem alt" já que agora existe uma conta real
       if (group.placeholderId !== null) {
