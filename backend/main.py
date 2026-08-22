@@ -1299,11 +1299,11 @@ async def list_alts(user: dict = Depends(require_auth)):
 
 @app.post("/api/alts")
 async def create_alt(body: AltCreatePayload, user: dict = Depends(require_auth)):
-    """Staff cadastra uma conta alt vinculada a um jogador (ou só a main, sem alt ainda)."""
+    """Membro cadastra uma conta alt vinculada a um jogador (ou só a main, sem alt ainda)."""
     clerk_id = user.get("sub")
     async with httpx.AsyncClient() as client:
         me = await _get_requester_profile(client, clerk_id)
-        _require_staff(me)
+        _require_member(me)
 
         if body.side not in ("euphoria", "blacklist"):
             raise HTTPException(status_code=400, detail="side deve ser 'euphoria' ou 'blacklist'")
@@ -1346,11 +1346,11 @@ async def create_alt(body: AltCreatePayload, user: dict = Depends(require_auth))
 
 @app.patch("/api/alts/{alt_id}")
 async def update_alt(alt_id: int, body: AltUpdatePayload, user: dict = Depends(require_auth)):
-    """Staff edita uma conta/alt existente."""
+    """Membro edita uma conta/alt existente."""
     clerk_id = user.get("sub")
     async with httpx.AsyncClient() as client:
         me = await _get_requester_profile(client, clerk_id)
-        _require_staff(me)
+        _require_member(me)
 
         update_data = {k: v for k, v in body.model_dump().items() if v is not None}
         if "side" in update_data and update_data["side"] not in ("euphoria", "blacklist"):
@@ -1371,11 +1371,11 @@ async def update_alt(alt_id: int, body: AltUpdatePayload, user: dict = Depends(r
 
 @app.delete("/api/alts/{alt_id}")
 async def delete_alt(alt_id: int, user: dict = Depends(require_auth)):
-    """Staff remove uma conta/alt."""
+    """Membro remove uma conta/alt."""
     clerk_id = user.get("sub")
     async with httpx.AsyncClient() as client:
         me = await _get_requester_profile(client, clerk_id)
-        _require_staff(me)
+        _require_member(me)
         resp = await client.delete(
             f"{SUPABASE_URL}/rest/v1/alt_accounts",
             headers=supabase_headers(),
