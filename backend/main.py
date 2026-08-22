@@ -1190,8 +1190,9 @@ async def toggle_donation(body: DonationTogglePayload, user: dict = Depends(requ
 
 class AltCreatePayload(BaseModel):
     main_nick: str
-    alt_nick: str
-    side: str = "euphoria"  # "euphoria" | "enemy"
+    alt_nick: Optional[str] = None
+    side: str = "euphoria"  # "euphoria" | "blacklist"
+    main_class: Optional[str] = None
     notes: Optional[str] = None
 
 
@@ -1199,6 +1200,7 @@ class AltUpdatePayload(BaseModel):
     main_nick: Optional[str] = None
     alt_nick: Optional[str] = None
     side: Optional[str] = None
+    main_class: Optional[str] = None
     notes: Optional[str] = None
 
 
@@ -1263,27 +1265,48 @@ async def list_alts(user: dict = Depends(require_auth)):
         )
         entries = resp.json() if resp.status_code == 200 else []
 
+        # Para o lado "euphoria", a classe da main vem sempre do perfil atual
+        # (fonte de verdade), pois pode ter sido editada depois do vínculo.
+        euphoria_mains = {e["main_nick"] for e in entries if e.get("side") == "euphoria"}
+        if euphoria_mains:
+            in_list = ",".join(f'"{n}"' for n in euphoria_mains)
+            pr = await client.get(
+                f"{SUPABASE_URL}/rest/v1/profiles",
+                headers=supabase_headers(),
+                params={"nick_mudomix": f"in.({in_list})", "select": "nick_mudomix,char_class"},
+            )
+            class_map = {
+                p["nick_mudomix"]: p.get("char_class")
+                for p in (pr.json() if pr.status_code == 200 else [])
+            }
+            for e in entries:
+                if e.get("side") == "euphoria":
+                    e["main_class"] = class_map.get(e["main_nick"]) or e.get("main_class")
+
     return {"visible_to_members": visible, "is_staff": is_staff, "entries": entries}
 
 
 @app.post("/api/alts")
 async def create_alt(body: AltCreatePayload, user: dict = Depends(require_auth)):
-    """Staff cadastra uma conta alt vinculada a um jogador."""
+    """Staff cadastra uma conta alt vinculada a um jogador (ou só a main, sem alt ainda)."""
     clerk_id = user.get("sub")
     async with httpx.AsyncClient() as client:
         me = await _get_requester_profile(client, clerk_id)
         _require_staff(me)
 
-        if body.side not in ("euphoria", "enemy"):
-            raise HTTPException(status_code=400, detail="side deve ser 'euphoria' ou 'enemy'")
+        if body.side not in ("euphoria", "blacklist"):
+            raise HTTPException(status_code=400, detail="side deve ser 'euphoria' ou 'blacklist'")
+
+        alt_nick = body.alt_nick.strip() if body.alt_nick and body.alt_nick.strip() else None
 
         resp = await client.post(
             f"{SUPABASE_URL}/rest/v1/alt_accounts",
             headers={**supabase_headers(), "Prefer": "return=representation"},
             json={
                 "main_nick": body.main_nick.strip(),
-                "alt_nick": body.alt_nick.strip(),
+                "alt_nick": alt_nick,
                 "side": body.side,
+                "main_class": body.main_class,
                 "notes": body.notes,
                 "created_by": me.get("nick_mudomix"),
             },
@@ -1303,8 +1326,8 @@ async def update_alt(alt_id: int, body: AltUpdatePayload, user: dict = Depends(r
         _require_staff(me)
 
         update_data = {k: v for k, v in body.model_dump().items() if v is not None}
-        if "side" in update_data and update_data["side"] not in ("euphoria", "enemy"):
-            raise HTTPException(status_code=400, detail="side deve ser 'euphoria' ou 'enemy'")
+        if "side" in update_data and update_data["side"] not in ("euphoria", "blacklist"):
+            raise HTTPException(status_code=400, detail="side deve ser 'euphoria' ou 'blacklist'")
         if not update_data:
             raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 

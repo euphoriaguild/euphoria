@@ -154,9 +154,9 @@ export const api = {
   setAltsVisibility: (visible_to_members: boolean) =>
     apiFetch('/api/alts/visibility', { method: 'POST', body: JSON.stringify({ visible_to_members }) }),
   getAlts: () => apiFetch<AltsData>('/api/alts'),
-  createAlt: (data: { main_nick: string; alt_nick: string; side: 'euphoria' | 'enemy'; notes?: string }) =>
+  createAlt: (data: { main_nick: string; alt_nick?: string; side: 'euphoria' | 'blacklist'; main_class?: string; notes?: string }) =>
     apiFetch<AltEntry>('/api/alts', { method: 'POST', body: JSON.stringify(data) }),
-  updateAlt: (id: number, data: Partial<{ main_nick: string; alt_nick: string; side: 'euphoria' | 'enemy'; notes: string }>) =>
+  updateAlt: (id: number, data: Partial<{ main_nick: string; alt_nick: string; side: 'euphoria' | 'blacklist'; main_class: string; notes: string }>) =>
     apiFetch(`/api/alts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteAlt: (id: number) =>
     apiFetch(`/api/alts/${id}`, { method: 'DELETE' }),
@@ -170,8 +170,9 @@ export interface AltsVisibility {
 export interface AltEntry {
   id: number
   main_nick: string
-  alt_nick: string
-  side: 'euphoria' | 'enemy'
+  alt_nick: string | null
+  side: 'euphoria' | 'blacklist'
+  main_class: string | null
   notes: string | null
   created_by: string | null
   created_at: string
