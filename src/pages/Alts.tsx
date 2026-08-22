@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Trash2, Eye, EyeOff, Users, X, Pencil, Check, ChevronDown, ChevronUp, Search } from 'lucide-react'
+import { Plus, Trash2, Eye, EyeOff, Users, X, Pencil, Check, Search } from 'lucide-react'
 import { api, type AltEntry, type AdminMember } from '../lib/api'
 import { useAuth } from '../contexts/AuthContext'
 
@@ -127,9 +127,6 @@ export function Alts() {
   const [editingAltId, setEditingAltId] = useState<number | null>(null)
   const [editAltNick, setEditAltNick] = useState('')
   const [editAltNotes, setEditAltNotes] = useState('')
-
-  // Controle de visualização
-  const [showAll, setShowAll] = useState(false)
 
   // Modal de detalhes
   const [selectedGroup, setSelectedGroup] = useState<AltGroup | null>(null)
@@ -447,88 +444,90 @@ export function Alts() {
 
         {loading ? (
           <div className="loading"><div className="spinner" /> Carregando...</div>
-        ) : search.trim() === '' && !showAll ? (
-          /* Sem busca: mostra resumo + botão para expandir */
-          <div className="card" style={{ textAlign: 'center', padding: '30px 20px' }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>🔍</div>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
-              Pesquise por um nick para ver as contas vinculadas
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>
-              {groups.filter(g => g.side === 'blacklist').length} inimigos identificados • {' '}
-              {groups.filter(g => g.side === 'euphoria').length} da nossa guilda
-            </div>
-            <button
-              className="btn btn-ghost"
-              onClick={() => setShowAll(true)}
-              style={{ fontSize: 12 }}
-            >
-              <ChevronDown size={14} /> Ver todos ({groups.length})
-            </button>
-          </div>
         ) : filteredGroups.length === 0 ? (
           <div className="card" style={{ textAlign: 'center', padding: '20px' }}>
             <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
-              Nenhum resultado para "{search}"
+              {search.trim() ? `Nenhum resultado para "${search}"` : 'Nenhum registro encontrado.'}
             </p>
           </div>
         ) : (
-          <>
-            {/* Botão para recolher quando está mostrando todos */}
-            {showAll && search.trim() === '' && (
-              <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                  Mostrando {filteredGroups.length} registro{filteredGroups.length !== 1 ? 's' : ''}
-                </span>
-                <button
-                  className="btn btn-ghost"
-                  onClick={() => setShowAll(false)}
-                  style={{ fontSize: 11, padding: '4px 10px' }}
-                >
-                  <ChevronUp size={12} /> Recolher
-                </button>
-              </div>
-            )}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
             {filteredGroups.map(g => {
               const key = `${g.side}::${g.mainNick}`
+              const visibleAlts = g.rows.slice(0, 5)
+              const hiddenCount = g.rows.length - 5
               return (
-                <div
-                  key={key}
-                  className="card"
-                  onClick={() => setSelectedGroup(g)}
-                  style={{
-                    padding: '10px 12px', cursor: 'pointer',
-                    transition: 'transform 0.1s, box-shadow 0.1s',
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)' }}
-                  onMouseLeave={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = '' }}
-                >
-                  <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>{g.mainNick}</div>
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <span style={{
-                      fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
-                      color: g.side === 'euphoria' ? 'var(--accent)' : 'var(--red)',
-                      background: g.side === 'euphoria' ? 'rgba(201,168,76,0.12)' : 'rgba(229,62,62,0.12)',
-                    }}>
-                      {SIDE_LABELS[g.side]}
-                    </span>
-                    {g.mainClass && (
-                      <span className={CLASS_COLORS[g.mainClass] ?? ''} style={{ fontSize: 10 }}>
-                        {g.mainClass}
-                      </span>
-                    )}
-                    {g.rows.length > 0 && (
-                      <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 'auto' }}>
-                        {g.rows.length} alt{g.rows.length !== 1 ? 's' : ''}
-                      </span>
-                    )}
+                <div key={key} className="card" style={{ padding: '12px 14px' }}>
+                  {/* Header */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>{g.mainNick}</div>
+                      <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center' }}>
+                        <span style={{
+                          fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
+                          color: g.side === 'euphoria' ? 'var(--accent)' : 'var(--red)',
+                          background: g.side === 'euphoria' ? 'rgba(201,168,76,0.12)' : 'rgba(229,62,62,0.12)',
+                        }}>
+                          {SIDE_LABELS[g.side]}
+                        </span>
+                        {g.mainClass && (
+                          <span className={CLASS_COLORS[g.mainClass] ?? ''} style={{ fontSize: 11 }}>
+                            {g.mainClass}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <button onClick={(e) => { e.stopPropagation(); handleRemoveGroup(g) }} disabled={busy}
+                      style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 2 }}>
+                      <Trash2 size={13} />
+                    </button>
                   </div>
+
+                  {/* Lista de alts (máximo 5) */}
+                  {g.rows.length === 0 ? (
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
+                      Nenhuma conta vinculada ainda.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
+                      {visibleAlts.map(r => (
+                        <div key={r.id} style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          padding: '4px 8px', background: 'var(--bg-700)', borderRadius: 5, fontSize: 12,
+                        }}>
+                          <span>{r.alt_nick}</span>
+                          <button onClick={(e) => { e.stopPropagation(); handleRemoveAlt(r.id) }} disabled={busy}
+                            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 0 }}>
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ))}
+                      {hiddenCount > 0 && (
+                        <button
+                          onClick={() => setSelectedGroup(g)}
+                          style={{
+                            padding: '6px 8px', background: 'var(--bg-700)', borderRadius: 5, fontSize: 11,
+                            color: 'var(--text-muted)', border: 'none', cursor: 'pointer', textAlign: 'center',
+                          }}
+                        >
+                          ... +{hiddenCount} conta{hiddenCount !== 1 ? 's' : ''} (ver todas)
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Botão adicionar */}
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: 11, padding: '4px 10px', width: '100%', justifyContent: 'center' }}
+                    onClick={() => setSelectedGroup(g)}
+                  >
+                    <Plus size={11} /> Adicionar / Editar
+                  </button>
                 </div>
               )
             })}
           </div>
-          </>
         )}
       </div>
 
