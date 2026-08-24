@@ -20,6 +20,8 @@ import { Alts }       from './pages/Alts'
 import { Profile }    from './pages/Profile'
 import { GuildPage }  from './pages/GuildPage'
 import { Requests }   from './pages/Requests'
+import { Presenca }   from './pages/Presenca'
+import { Statute }    from './pages/Statute'
 
 function AppLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -54,7 +56,10 @@ export default function App() {
           <Route path="/world-boss"      element={<Protected><WorldBoss /></Protected>} />
           <Route path="/sorteio"         element={<Protected><Raffle /></Protected>} />
           <Route path="/doacoes"         element={<Protected><Donations /></Protected>} />
-          <Route path="/contas-alts"     element={<Protected><Alts /></Protected>} />
+          <Route path="/contas-alts"     element={<Protected><Alts fixedSide="euphoria" /></Protected>} />
+          <Route path="/blacklist"       element={<Protected><Alts fixedSide="blacklist" /></Protected>} />
+          <Route path="/presenca"        element={<Protected><Presenca /></Protected>} />
+          <Route path="/estatuto"        element={<Protected><Statute /></Protected>} />
           <Route path="/perfil"          element={<Protected><Profile /></Protected>} />
           <Route path="/perfil/:name"    element={<Protected><Profile /></Protected>} />
 

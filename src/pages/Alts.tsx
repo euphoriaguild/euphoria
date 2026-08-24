@@ -100,7 +100,7 @@ function AutocompleteInput({ value, onChange, suggestions, placeholder }: {
   )
 }
 
-export function Alts() {
+export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {}) {
   const { isStaff } = useAuth()
 
   const [entries, setEntries] = useState<AltEntry[]>([])
@@ -111,11 +111,11 @@ export function Alts() {
   const [allowed, setAllowed] = useState(true)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [sideFilter, setSideFilter] = useState<'all' | 'euphoria' | 'blacklist'>('all')
+  const [sideFilter, setSideFilter] = useState<'all' | 'euphoria' | 'blacklist'>(fixedSide ?? 'all')
   const [busy, setBusy] = useState(false)
 
   // Form: criar novo vínculo
-  const [formSide, setFormSide] = useState<'euphoria' | 'blacklist'>('euphoria')
+  const [formSide, setFormSide] = useState<'euphoria' | 'blacklist'>(fixedSide ?? 'euphoria')
   const [mainNick, setMainNick] = useState('')
   const [altNick, setAltNick] = useState('')
   const [mainClass, setMainClass] = useState('ELF')
@@ -299,9 +299,9 @@ export function Alts() {
   return (
     <>
       <div className="page-header">
-        <h2>Contas &amp; Alts</h2>
+        <h2>{fixedSide === 'blacklist' ? 'Blacklist' : fixedSide === 'euphoria' ? 'Contas & Alts — Nossa Guilda' : 'Contas & Alts'}</h2>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-          {filteredGroups.length} de {groups.length} contas principais
+          {filteredGroups.length} de {fixedSide ? groups.filter(g => g.side === fixedSide).length : groups.length} contas principais
         </span>
       </div>
 
@@ -351,25 +351,27 @@ export function Alts() {
 
         {/* Formulário de cadastro - disponível para todos os membros */}
         <div className="card" style={{ marginBottom: 16 }}>
-          <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
-            <button
-                onClick={() => setFormSide('euphoria')}
-                className={formSide === 'euphoria' ? 'btn btn-primary' : 'btn btn-ghost'}
-                style={{ fontSize: 12 }}
-              >
-                + Nossa Guilda
-              </button>
-              {/* Botão de blacklist só aparece quando não está em modo restrito */}
-              {!restrictedMode && (
-                <button
-                  onClick={() => setFormSide('blacklist')}
-                  className={formSide === 'blacklist' ? 'btn btn-primary' : 'btn btn-ghost'}
+          {!fixedSide && (
+            <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+              <button
+                  onClick={() => setFormSide('euphoria')}
+                  className={formSide === 'euphoria' ? 'btn btn-primary' : 'btn btn-ghost'}
                   style={{ fontSize: 12 }}
                 >
-                  + Blacklist
+                  + Nossa Guilda
                 </button>
-              )}
-            </div>
+                {/* Botão de blacklist só aparece quando não está em modo restrito */}
+                {!restrictedMode && (
+                  <button
+                    onClick={() => setFormSide('blacklist')}
+                    className={formSide === 'blacklist' ? 'btn btn-primary' : 'btn btn-ghost'}
+                    style={{ fontSize: 12 }}
+                  >
+                    + Blacklist
+                  </button>
+                )}
+              </div>
+          )}
 
             {formSide === 'euphoria' ? (
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -468,19 +470,21 @@ export function Alts() {
                 }}
               />
             </div>
-            <select
-              value={sideFilter}
-              onChange={e => setSideFilter(e.target.value as 'all' | 'euphoria' | 'blacklist')}
-              style={{
-                padding: '8px 12px', background: 'var(--bg-700)',
-                border: '1px solid var(--border)', borderRadius: 6,
-                color: 'var(--text-primary)', fontSize: 13,
-              }}
-            >
-              <option value="all">Todos</option>
-              <option value="euphoria">Nossa Guilda</option>
-              <option value="blacklist">Blacklist</option>
-            </select>
+            {!fixedSide && (
+              <select
+                value={sideFilter}
+                onChange={e => setSideFilter(e.target.value as 'all' | 'euphoria' | 'blacklist')}
+                style={{
+                  padding: '8px 12px', background: 'var(--bg-700)',
+                  border: '1px solid var(--border)', borderRadius: 6,
+                  color: 'var(--text-primary)', fontSize: 13,
+                }}
+              >
+                <option value="all">Todos</option>
+                <option value="euphoria">Nossa Guilda</option>
+                <option value="blacklist">Blacklist</option>
+              </select>
+            )}
           </div>
         </div>
 

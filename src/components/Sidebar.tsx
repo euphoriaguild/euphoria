@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import {
   LayoutDashboard, Users, Trophy, Swords,
   Dice5, Globe, Coins, ClipboardList, LogOut, UserSearch,
+  ShieldAlert, ClipboardCheck, ScrollText,
 } from 'lucide-react'
 import { useClerk, useUser } from '@clerk/clerk-react'
 import { useAuth } from '../contexts/AuthContext'
@@ -76,6 +77,11 @@ export function Sidebar() {
           World Boss
         </NavLink>
 
+        <NavLink to="/presenca" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+          <ClipboardCheck />
+          Presença
+        </NavLink>
+
         <span className="nav-section-title">Ferramentas</span>
 
         <NavLink to="/sorteio" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
@@ -88,10 +94,22 @@ export function Sidebar() {
           Doações
         </NavLink>
 
+        <NavLink to="/estatuto" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+          <ScrollText />
+          Estatuto
+        </NavLink>
+
         {canSeeAlts && (
           <NavLink to="/contas-alts" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
             <UserSearch />
             Contas &amp; Alts
+          </NavLink>
+        )}
+
+        {canSeeAlts && (
+          <NavLink to="/blacklist" className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}>
+            <ShieldAlert />
+            Blacklist
           </NavLink>
         )}
 

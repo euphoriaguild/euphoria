@@ -126,7 +126,7 @@ export const api = {
 
   // Perfil / aprovação — passam pelo backend com Clerk JWT
   getMyProfile: () => apiFetch<ProfileData>('/api/profile/me'),
-  saveProfile: (data: { nick_mudomix: string; guild: string; discord_username?: string; discord_id?: string; avatar_url?: string }) =>
+  saveProfile: (data: { nick_mudomix: string; guild: string; phone: string; discord_username?: string; discord_id?: string; avatar_url?: string }) =>
     apiFetch('/api/profile', { method: 'POST', body: JSON.stringify(data) }),
   getPendingMembers: () => apiFetch<PendingMember[]>('/api/profile/pending'),
   approveProfile: (clerk_id: string, role: string) =>
@@ -136,6 +136,19 @@ export const api = {
   getAllMembersAdmin: () => apiFetch<AdminMember[]>('/api/members/all/admin'),
   updateMember: (nick: string, data: { char_class?: string; resets?: number; level?: number }) =>
     apiFetch(`/api/members/${encodeURIComponent(nick)}`, { method: 'PATCH', body: JSON.stringify({ nick_mudomix: nick, ...data }) }),
+
+  // Perfil interno do membro (não-scraping) + equipamentos
+  getMemberProfile: (nick: string) => apiFetch<MemberProfileData>(`/api/members/${encodeURIComponent(nick)}/profile`),
+  updateMemberEquipment: (nick: string, data: Partial<{ equip_set: string; equip_weapon: string; equip_accessory: string }>) =>
+    apiFetch(`/api/members/${encodeURIComponent(nick)}/equipment`, { method: 'PATCH', body: JSON.stringify(data) }),
+
+  // Relatório de presença (World Boss)
+  getWorldBossReport: (days = 30) => apiFetch<WorldBossReport>(`/api/worldboss/report?days=${days}`),
+
+  // Estatuto interno
+  getStatute: () => apiFetch<StatuteData>('/api/statute'),
+  updateStatute: (content: string) =>
+    apiFetch('/api/statute', { method: 'PUT', body: JSON.stringify({ content }) }),
 
   // Sorteio (self-service)
   getActiveRaffle: () => apiFetch<ActiveRaffle>('/api/raffle/active'),
@@ -266,8 +279,46 @@ export interface ProfileData {
   avatar_url: string | null
   nick_mudomix: string | null
   guild: string | null
+  phone: string | null
   role: string
   approved_at: string | null
+  equip_set?: string | null
+  equip_weapon?: string | null
+  equip_accessory?: string | null
+}
+
+export interface MemberProfileData {
+  nick_mudomix: string
+  guild: string | null
+  char_class: string
+  resets: number
+  level: number
+  role: string
+  avatar_url: string | null
+  equip_set: string | null
+  equip_weapon: string | null
+  equip_accessory: string | null
+  is_me: boolean
+}
+
+export interface WorldBossReportMember {
+  nick_mudomix: string
+  char_class: string
+  total: number
+  attended_days: string[]
+}
+
+export interface WorldBossReport {
+  days: string[]
+  members: WorldBossReportMember[]
+  range_start: string
+  range_end: string
+}
+
+export interface StatuteData {
+  content: string
+  updated_by: string | null
+  updated_at: string | null
 }
 
 export interface PendingMember {

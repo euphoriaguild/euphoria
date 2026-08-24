@@ -5,6 +5,7 @@ from starlette.requests import Request
 from contextlib import asynccontextmanager
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Optional
 import os
@@ -309,6 +310,7 @@ async def get_alliance_stats(_user: dict = Depends(require_auth)):
 class ProfilePayload(BaseModel):
     nick_mudomix: str
     guild: str
+    phone: str
     discord_username: Optional[str] = None
     discord_id: Optional[str] = None
     avatar_url: Optional[str] = None
@@ -340,6 +342,11 @@ async def save_profile(
     if not clerk_id:
         raise HTTPException(status_code=401, detail="clerk_id ausente no token")
 
+    # Telefone é obrigatório (formato de celular brasileiro)
+    phone_digits = re.sub(r"\D", "", body.phone or "")
+    if len(phone_digits) < 10 or len(phone_digits) > 11:
+        raise HTTPException(status_code=400, detail="Telefone inválido. Use o formato (99) 99999-9999.")
+
     # Verifica se o Discord ID do usuário está no servidor da guilda
     if body.discord_id:
         in_guild = await is_in_discord_guild(body.discord_id)
@@ -353,6 +360,7 @@ async def save_profile(
         "clerk_id": clerk_id,
         "nick_mudomix": body.nick_mudomix,
         "guild": body.guild,
+        "phone": body.phone.strip(),
         "discord_username": body.discord_username,
         "discord_id": body.discord_id,
         "avatar_url": body.avatar_url,
@@ -645,6 +653,80 @@ async def get_worldboss_checkins(
     return checkins
 
 
+@app.get("/api/worldboss/report")
+async def get_worldboss_report(
+    days: int = 30,
+    user: dict = Depends(require_auth),
+):
+    """Relatório de presença no World Boss: total de check-ins por membro e grade dos últimos N dias."""
+    days = max(1, min(days, 90))
+    async with httpx.AsyncClient() as client:
+        clerk_id = user.get("sub")
+        await _get_requester_profile(client, clerk_id)  # garante autenticado/aprovado
+
+        today = get_brasilia_now().date()
+        start_date = (today.fromordinal(today.toordinal() - (days - 1))).isoformat()
+
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/world_boss_checkins",
+            headers=supabase_headers(),
+            params={
+                "boss_date": f"gte.{start_date}",
+                "select": "nick_mudomix,char_class,boss_date,boss_name",
+                "order": "boss_date.asc",
+            },
+        )
+        checkins = resp.json() if resp.status_code == 200 else []
+
+        # Dias em que efetivamente houve boss (dias que aparecem em pelo menos 1 check-in ou hoje)
+        all_days = sorted({c["boss_date"] for c in checkins})
+
+        # Agrega por membro
+        by_member: dict[str, dict] = {}
+        for c in checkins:
+            nick = c["nick_mudomix"]
+            if nick not in by_member:
+                by_member[nick] = {
+                    "nick_mudomix": nick,
+                    "char_class": c.get("char_class") or "",
+                    "total": 0,
+                    "days": set(),
+                }
+            by_member[nick]["total"] += 1
+            by_member[nick]["days"].add(c["boss_date"])
+
+        # Sempre usa a classe ATUAL do perfil
+        nicks = list(by_member.keys())
+        if nicks:
+            in_list = ",".join(f'"{n}"' for n in nicks)
+            pr = await client.get(
+                f"{SUPABASE_URL}/rest/v1/profiles",
+                headers=supabase_headers(),
+                params={"nick_mudomix": f"in.({in_list})", "select": "nick_mudomix,char_class"},
+            )
+            class_map = {
+                p["nick_mudomix"]: p.get("char_class")
+                for p in (pr.json() if pr.status_code == 200 else [])
+            }
+            for nick, m in by_member.items():
+                current = class_map.get(nick)
+                if current:
+                    m["char_class"] = current
+
+        members = [
+            {
+                "nick_mudomix": m["nick_mudomix"],
+                "char_class": m["char_class"],
+                "total": m["total"],
+                "attended_days": sorted(m["days"]),
+            }
+            for m in by_member.values()
+        ]
+        members.sort(key=lambda m: m["total"], reverse=True)
+
+    return {"days": all_days, "members": members, "range_start": start_date, "range_end": today.isoformat()}
+
+
 class PartiesPayload(BaseModel):
     parties: list[dict]  # [{name: "PT1", members: ["player1", ...]}, ...]
 
@@ -832,6 +914,64 @@ async def get_all_members_admin(
         }
         for p in profiles
     ]
+
+
+class EquipmentPayload(BaseModel):
+    equip_set: Optional[str] = None
+    equip_weapon: Optional[str] = None
+    equip_accessory: Optional[str] = None
+
+
+@app.get("/api/members/{nick}/profile")
+async def get_member_profile(nick: str, user: dict = Depends(require_auth)):
+    """Retorna o perfil interno (não-scraping) de um membro para visualização de qualquer usuário aprovado."""
+    clerk_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        me = await _get_requester_profile(client, clerk_id)
+        _require_member(me)
+
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            headers=supabase_headers(),
+            params={
+                "nick_mudomix": f"eq.{nick}",
+                "select": "nick_mudomix,guild,char_class,resets,level,role,avatar_url,equip_set,equip_weapon,equip_accessory",
+                "limit": "1",
+            },
+        )
+        rows = resp.json() if resp.status_code == 200 else []
+        if not rows:
+            raise HTTPException(status_code=404, detail="Membro não encontrado")
+        member = rows[0]
+        member["is_me"] = member.get("nick_mudomix", "").lower() == (me.get("nick_mudomix") or "").lower()
+    return member
+
+
+@app.patch("/api/members/{nick}/equipment")
+async def update_member_equipment(nick: str, body: EquipmentPayload, user: dict = Depends(require_auth)):
+    """Membro atualiza seu próprio equipamento (set/shield, arma, acessório). Staff pode editar de qualquer um."""
+    clerk_id = user.get("sub")
+    async with httpx.AsyncClient() as client:
+        me = await _get_requester_profile(client, clerk_id)
+        _require_member(me)
+        is_staff = me.get("role") in ("staff", "admin")
+        is_owner = (me.get("nick_mudomix") or "").lower() == nick.lower()
+        if not is_staff and not is_owner:
+            raise HTTPException(status_code=403, detail="Você só pode editar seu próprio equipamento.")
+
+        update_data = {k: v for k, v in body.model_dump().items() if v is not None}
+        if not update_data:
+            raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
+
+        resp = await client.patch(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            headers=supabase_headers(),
+            params={"nick_mudomix": f"eq.{nick}"},
+            json=update_data,
+        )
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=500, detail=resp.text)
+    return {"ok": True}
 
 
 # ── Helpers de autorização e perfil ──────────────────────────────────────────
@@ -1447,6 +1587,47 @@ async def delete_alt(alt_id: int, user: dict = Depends(require_auth)):
             f"{SUPABASE_URL}/rest/v1/alt_accounts",
             headers=supabase_headers(),
             params={"id": f"eq.{alt_id}"},
+        )
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=500, detail=resp.text)
+    return {"ok": True}
+
+
+# ── Estatuto Interno ──────────────────────────────────────────────────────────
+
+class StatutePayload(BaseModel):
+    content: str
+
+
+@app.get("/api/statute")
+async def get_statute(user: dict = Depends(require_auth)):
+    """Retorna o estatuto interno vigente. Visível a qualquer membro aprovado."""
+    async with httpx.AsyncClient() as client:
+        me = await _get_requester_profile(client, user.get("sub"))
+        _require_member(me)
+
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/guild_statute",
+            headers=supabase_headers(),
+            params={"select": "content,updated_by,updated_at", "order": "id.desc", "limit": "1"},
+        )
+        rows = resp.json() if resp.status_code == 200 else []
+    if not rows:
+        return {"content": "", "updated_by": None, "updated_at": None}
+    return rows[0]
+
+
+@app.put("/api/statute")
+async def update_statute(body: StatutePayload, user: dict = Depends(require_auth)):
+    """Atualiza o estatuto interno (staff/admin only)."""
+    async with httpx.AsyncClient() as client:
+        me = await _get_requester_profile(client, user.get("sub"))
+        _require_staff(me)
+
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/guild_statute",
+            headers={**supabase_headers(), "Prefer": "return=representation"},
+            json={"content": body.content, "updated_by": me.get("nick_mudomix")},
         )
         if resp.status_code >= 400:
             raise HTTPException(status_code=500, detail=resp.text)

@@ -4,11 +4,20 @@ import { useUser } from '@clerk/clerk-react'
 import { useAuth } from '../contexts/AuthContext'
 import { api } from '../lib/api'
 
+function formatPhone(value: string): string {
+  const digits = value.replace(/\D/g, '').slice(0, 11)
+  if (digits.length <= 2) return digits.length ? `(${digits}` : ''
+  if (digits.length <= 6) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`
+  if (digits.length <= 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`
+}
+
 export function SetupProfile() {
   const { user } = useUser()
   const { profile, refreshProfile } = useAuth()
   const navigate = useNavigate()
   const [nick, setNick] = useState(profile?.nick_mudomix ?? '')
+  const [phone, setPhone] = useState(profile?.phone ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -21,6 +30,11 @@ export function SetupProfile() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!nick.trim()) { setError('Preencha o nick.'); return }
+    const phoneDigits = phone.replace(/\D/g, '')
+    if (phoneDigits.length < 10 || phoneDigits.length > 11) {
+      setError('Informe um telefone válido, com DDD.')
+      return
+    }
 
     setSaving(true)
     setError('')
@@ -29,6 +43,7 @@ export function SetupProfile() {
       await api.saveProfile({
         nick_mudomix: nick.trim(),
         guild: 'Euphoria', // Guilda fixa
+        phone: phone.trim(),
         discord_username: discordUsername ?? undefined,
         discord_id: discordId ?? undefined,
         avatar_url: avatarUrl ?? undefined,
@@ -102,6 +117,32 @@ export function SetupProfile() {
               />
               <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
                 Exatamente como aparece no perfil do mudomix.com
+              </p>
+            </div>
+
+            <div style={{ marginBottom: 24 }}>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600,
+                color: 'var(--text-secondary)', marginBottom: 6, textTransform: 'uppercase',
+                letterSpacing: 1 }}>
+                Telefone (WhatsApp) *
+              </label>
+              <input
+                value={phone}
+                onChange={e => setPhone(formatPhone(e.target.value))}
+                placeholder="(11) 91234-5678"
+                inputMode="tel"
+                autoComplete="tel"
+                style={{
+                  width: '100%', padding: '10px 14px',
+                  background: 'var(--bg-700)', border: '1px solid var(--border)',
+                  borderRadius: 6, color: 'var(--text-primary)', fontSize: 14, outline: 'none',
+                  transition: 'border-color 0.15s',
+                }}
+                onFocus={e => (e.target.style.borderColor = 'var(--accent)')}
+                onBlur={e => (e.target.style.borderColor = 'var(--border)')}
+              />
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                Obrigatório, usado pela liderança para contato direto.
               </p>
             </div>
 
