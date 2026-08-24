@@ -45,6 +45,7 @@ export function Presenca() {
   const members = (report?.members ?? []).filter(m =>
     m.nick_mudomix.toLowerCase().includes(search.trim().toLowerCase())
   )
+  const reportDays = report?.days ?? []
 
   return (
     <>
@@ -83,11 +84,16 @@ export function Presenca() {
               ))}
             </div>
           </div>
+          {report && (
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10 }}>
+              Período: {formatDay(report.range_start)} até {formatDay(report.range_end)} · {reportDays.length} dia{reportDays.length !== 1 ? 's' : ''} com boss registrado
+            </div>
+          )}
         </div>
 
         {loading ? (
           <div className="loading"><div className="spinner" /> Carregando...</div>
-        ) : !report || members.length === 0 ? (
+        ) : !report || reportDays.length === 0 || members.length === 0 ? (
           <div className="card" style={{ textAlign: 'center', padding: 40 }}>
             <ClipboardCheck size={28} style={{ color: 'var(--text-muted)', marginBottom: 8 }} />
             <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
@@ -103,7 +109,11 @@ export function Presenca() {
                   <th>Membro</th>
                   <th>Classe</th>
                   <th>Presenças</th>
-                  <th>Últimos dias</th>
+                  {reportDays.map(day => (
+                    <th key={day} style={{ textAlign: 'center', padding: '10px 6px' }}>
+                      {formatDay(day)}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -115,28 +125,25 @@ export function Presenca() {
                       <span className={CLASS_COLORS[m.char_class] ?? ''}>{m.char_class || '—'}</span>
                     </td>
                     <td style={{ color: 'var(--accent)', fontWeight: 700 }}>{m.total}</td>
-                    <td>
-                      <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
-                        {(report.days ?? []).map(day => {
-                          const attended = m.attended_days.includes(day)
-                          return (
-                            <span
-                              key={day}
-                              title={`${formatDay(day)} — ${attended ? 'presente' : 'ausente'}`}
-                              style={{
-                                width: 20, height: 20, borderRadius: 4, fontSize: 9,
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                background: attended ? 'rgba(72,187,120,0.2)' : 'var(--bg-700)',
-                                color: attended ? '#48bb78' : 'var(--text-muted)',
-                                border: attended ? '1px solid rgba(72,187,120,0.4)' : '1px solid var(--border)',
-                              }}
-                            >
-                              {attended ? '✓' : ''}
-                            </span>
-                          )
-                        })}
-                      </div>
-                    </td>
+                    {reportDays.map(day => {
+                      const attended = m.attended_days.includes(day)
+                      return (
+                        <td key={day} style={{ textAlign: 'center', padding: '6px' }}>
+                          <span
+                            title={`${formatDay(day)} — ${attended ? 'presente' : 'ausente'}`}
+                            style={{
+                              display: 'inline-flex', width: 20, height: 20, borderRadius: 4, fontSize: 10,
+                              alignItems: 'center', justifyContent: 'center',
+                              background: attended ? 'rgba(72,187,120,0.2)' : 'var(--bg-700)',
+                              color: attended ? '#48bb78' : 'var(--text-muted)',
+                              border: attended ? '1px solid rgba(72,187,120,0.4)' : '1px solid var(--border)',
+                            }}
+                          >
+                            {attended ? '✓' : ''}
+                          </span>
+                        </td>
+                      )
+                    })}
                   </tr>
                 ))}
               </tbody>

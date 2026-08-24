@@ -56,8 +56,8 @@ export default function App() {
           <Route path="/world-boss"      element={<Protected><WorldBoss /></Protected>} />
           <Route path="/sorteio"         element={<Protected><Raffle /></Protected>} />
           <Route path="/doacoes"         element={<Protected><Donations /></Protected>} />
-          <Route path="/contas-alts"     element={<Protected><Alts fixedSide="euphoria" /></Protected>} />
-          <Route path="/blacklist"       element={<Protected><Alts fixedSide="blacklist" /></Protected>} />
+          <Route path="/contas-alts"     element={<Protected><Alts key="euphoria" fixedSide="euphoria" /></Protected>} />
+          <Route path="/blacklist"       element={<Protected><Alts key="blacklist" fixedSide="blacklist" /></Protected>} />
           <Route path="/presenca"        element={<Protected><Presenca /></Protected>} />
           <Route path="/estatuto"        element={<Protected><Statute /></Protected>} />
           <Route path="/perfil"          element={<Protected><Profile /></Protected>} />

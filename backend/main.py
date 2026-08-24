@@ -681,7 +681,8 @@ async def get_worldboss_report(
         # Dias em que efetivamente houve boss (dias que aparecem em pelo menos 1 check-in ou hoje)
         all_days = sorted({c["boss_date"] for c in checkins})
 
-        # Agrega por membro
+        # Agrega por membro (usa set de dias para evitar contar duplicatas
+        # — ex: checkins duplicados no mesmo dia por reconexão com novo clerk_id)
         by_member: dict[str, dict] = {}
         for c in checkins:
             nick = c["nick_mudomix"]
@@ -689,10 +690,8 @@ async def get_worldboss_report(
                 by_member[nick] = {
                     "nick_mudomix": nick,
                     "char_class": c.get("char_class") or "",
-                    "total": 0,
                     "days": set(),
                 }
-            by_member[nick]["total"] += 1
             by_member[nick]["days"].add(c["boss_date"])
 
         # Sempre usa a classe ATUAL do perfil
@@ -717,7 +716,7 @@ async def get_worldboss_report(
             {
                 "nick_mudomix": m["nick_mudomix"],
                 "char_class": m["char_class"],
-                "total": m["total"],
+                "total": len(m["days"]),
                 "attended_days": sorted(m["days"]),
             }
             for m in by_member.values()
