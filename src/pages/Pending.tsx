@@ -1,20 +1,20 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useClerk } from '@clerk/clerk-react'
 import { useAuth } from '../contexts/AuthContext'
 
 export function Pending() {
-  const { profile, refreshProfile, isApproved } = useAuth()
-  const { signOut } = useClerk()
+  const { profile, refreshProfile, isApproved, isSignedIn, isLoaded, signOut } = useAuth()
   const navigate = useNavigate()
   const [checking, setChecking] = useState(false)
 
-  // Quando aprovado, redireciona para o dashboard automaticamente
+  useEffect(() => {
+    if (isLoaded && !isSignedIn) navigate('/entrar', { replace: true })
+  }, [isLoaded, isSignedIn, navigate])
+
   useEffect(() => {
     if (isApproved) navigate('/', { replace: true })
   }, [isApproved, navigate])
 
-  // Faz polling a cada 15s para verificar se foi aprovado
   useEffect(() => {
     const id = setInterval(async () => {
       await refreshProfile()
@@ -52,7 +52,6 @@ export function Pending() {
             seu perfil e liberar o acesso em breve.
           </p>
 
-          {/* Info do perfil enviado */}
           {profile && (
             <div style={{
               background: 'var(--bg-700)', borderRadius: 8, padding: 16,
@@ -72,7 +71,7 @@ export function Pending() {
             <button className="btn btn-ghost" onClick={handleCheck} disabled={checking}>
               {checking ? 'Verificando...' : '↻ Verificar status'}
             </button>
-            <button className="btn btn-danger" onClick={() => signOut()}>
+            <button className="btn btn-danger" onClick={() => signOut().then(() => navigate('/entrar'))}>
               Sair
             </button>
           </div>

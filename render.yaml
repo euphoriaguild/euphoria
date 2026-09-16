@@ -1,19 +1,50 @@
+# Deploy recomendado: Docker (ODBC SQL Server)
+# Dashboard Render → New → Web Service → Docker
+
 services:
   - type: web
-    name: euphoria-backend
-    runtime: python
+    name: euphoria-api
+    runtime: docker
     rootDir: backend
-    pythonVersion: "3.11"
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /api/health/db
     envVars:
-      - key: CLERK_JWKS_URL
+      - key: AUTH_PROVIDER
+        value: self
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: JWT_ISSUER
+        value: euphoria-api
+      - key: JWT_AUDIENCE
+        value: euphoria-app
+      - key: ACCESS_TOKEN_TTL_SEC
+        value: "3600"
+      - key: REFRESH_TOKEN_TTL_SEC
+        value: "2592000"
+      - key: SQLSERVER_HOST
         sync: false
-      - key: SUPABASE_URL
+      - key: SQLSERVER_PORT
+        value: "1433"
+      - key: SQLSERVER_DATABASE
+        value: euphoria
+      - key: SQLSERVER_USER
         sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
+      - key: SQLSERVER_PASSWORD
         sync: false
-      - key: DISCORD_BOT_TOKEN
+      - key: SQLSERVER_ENCRYPT
+        value: "yes"
+      - key: SQLSERVER_TRUST_SERVER_CERTIFICATE
+        value: "yes"
+      - key: DISCORD_CLIENT_ID
         sync: false
-      - key: DISCORD_GUILD_ID
+      - key: DISCORD_CLIENT_SECRET
+        sync: false
+      - key: DISCORD_REDIRECT_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: CORS_ORIGINS
         sync: false

@@ -1,29 +1,56 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
+from fastapi import FastAPI, HTTPException, Depends, Response, Cookie
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.requests import Request
 from contextlib import asynccontextmanager
-import asyncio
 import logging
 import re
 from datetime import datetime, timezone
 from typing import Optional
 import os
+from urllib.parse import quote
 import httpx
 from dotenv import load_dotenv
 from pydantic import BaseModel
+from zoneinfo import ZoneInfo
 
 from scraper import scrape_character, ALLIANCE_GUILDS
-from auth import require_auth, get_current_user
+from auth import require_auth, get_current_user, AUTH_PROVIDER
+import db as mssql
+import store
+import store_auth
+import oauth_discord
+import auth_tokens
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
 DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID", "")
+FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://127.0.0.1:5173").rstrip("/")
+OAUTH_STATE_COOKIE = "oauth_state"
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "").lower() in ("1", "true", "yes")
+
+
+def _cors_origins() -> list[str]:
+    """Origens CORS. Env CORS_ORIGINS=url1,url2 sobrescreve/estende o default."""
+    defaults = [
+        "https://euphoria-one-zeta.vercel.app",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
+    extra = os.getenv("CORS_ORIGINS", "").strip()
+    if not extra:
+        # inclui FRONTEND_ORIGIN se diferente
+        if FRONTEND_ORIGIN and FRONTEND_ORIGIN not in defaults:
+            return defaults + [FRONTEND_ORIGIN]
+        return defaults
+    origins = [o.strip().rstrip("/") for o in extra.split(",") if o.strip()]
+    # sempre permite FRONTEND_ORIGIN
+    if FRONTEND_ORIGIN and FRONTEND_ORIGIN not in origins:
+        origins.append(FRONTEND_ORIGIN)
+    return origins
 
 
 async def is_in_discord_guild(discord_id: str) -> bool:
@@ -39,32 +66,11 @@ async def is_in_discord_guild(discord_id: str) -> bool:
         return resp.status_code == 200
 
 
-def supabase_headers() -> dict:
-    """Headers de autenticação com service_role para escrever no Supabase."""
-    return {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "return=representation",
-    }
-
 # ── Helpers de dados de perfis ───────────────────────────────────────────────
 
-async def get_approved_profiles() -> list[dict]:
+def get_approved_profiles() -> list[dict]:
     """Busca todos os perfis aprovados. Fonte de verdade para rankings e stats."""
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            headers=supabase_headers(),
-            params={
-                "select": "nick_mudomix,guild,char_class,resets,level,role,approved_at",
-                "approved_at": "not.is.null",
-                "order": "resets.desc",
-            },
-        )
-        if r.status_code == 200:
-            return r.json()
-        return []
+    return store.get_approved_profiles()
 
 
 def profiles_to_alliance(profiles: list[dict]) -> dict:
@@ -107,7 +113,7 @@ def profiles_to_alliance(profiles: list[dict]) -> dict:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    yield  # sem scraping em startup — dados vêm do Supabase on-demand
+    yield  # sem scraping em startup — dados vêm do SQL Server on-demand
 
 
 app = FastAPI(
@@ -119,10 +125,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://euphoria-one-zeta.vercel.app",
-        "http://localhost:5173",  # desenvolvimento local
-    ],
+    allow_origins=_cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -138,7 +141,32 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 
 def cache_stale(key: str, ttl: int = 300) -> bool:
-    return True  # sem cache local — dados sempre frescos do Supabase
+    return True  # sem cache local — dados sempre frescos do SQL Server
+
+
+# ── Helpers de autorização e perfil ──────────────────────────────────────────
+
+def _get_requester_profile(user_id: str) -> dict:
+    """Retorna o perfil do usuário autenticado (nick, role, char_class)."""
+    profile = store.get_requester_profile(user_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Perfil não encontrado")
+    return profile
+
+
+def _require_staff(profile: dict):
+    if profile.get("role") not in ("staff", "admin"):
+        raise HTTPException(status_code=403, detail="Acesso restrito a staff")
+
+
+def _require_member(profile: dict):
+    """Permite qualquer membro aprovado (não exige staff)."""
+    if profile.get("approved_at") is None and profile.get("role") not in ("member", "staff", "admin"):
+        raise HTTPException(status_code=403, detail="Apenas membros aprovados.")
+
+
+def _get_alts_visibility() -> bool:
+    return store.get_alts_visibility()
 
 
 # ─── ROTAS ────────────────────────────────────────────────────────────────────
@@ -148,17 +176,28 @@ async def root():
     return {"message": "Euphoria Guild Platform API", "version": "1.0.0"}
 
 
+@app.get("/api/health/db")
+async def health_db():
+    """Smoke test da conexão com SQL Server (VPS). Sem autenticação."""
+    try:
+        info = mssql.healthcheck()
+        return info
+    except Exception as exc:
+        logger.exception("Health DB falhou")
+        raise HTTPException(status_code=503, detail=f"SQL Server indisponível: {exc}") from exc
+
+
 @app.get("/api/alliance")
 async def get_alliance(_user: dict = Depends(require_auth)):
     """Retorna dados consolidados de toda a aliança a partir dos perfis aprovados."""
-    profiles = await get_approved_profiles()
+    profiles = get_approved_profiles()
     return profiles_to_alliance(profiles)
 
 
 @app.get("/api/guilds")
 async def list_guilds(_user: dict = Depends(require_auth)):
     """Lista todas as guildas da aliança com seus membros aprovados."""
-    profiles = await get_approved_profiles()
+    profiles = get_approved_profiles()
     alliance = profiles_to_alliance(profiles)
     return alliance["guilds"]
 
@@ -166,31 +205,21 @@ async def list_guilds(_user: dict = Depends(require_auth)):
 @app.get("/api/guilds/{guild_name}")
 async def get_guild(guild_name: str, _user: dict = Depends(require_auth)):
     """Retorna membros aprovados de uma guilda específica."""
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            headers=supabase_headers(),
-            params={
-                "select": "nick_mudomix,char_class,resets,level,guild,role",
-                "guild": f"ilike.{guild_name}",
-                "approved_at": "not.is.null",
-                "order": "resets.desc",
-            },
-        )
-        if r.status_code != 200 or not r.json():
-            raise HTTPException(status_code=404, detail=f"Guilda '{guild_name}' não encontrada")
+    profiles = store.get_profiles_by_guild(guild_name)
+    if not profiles:
+        raise HTTPException(status_code=404, detail=f"Guilda '{guild_name}' não encontrada")
 
-        members = [
-            {
-                "name": p["nick_mudomix"],
-                "char_class": p.get("char_class") or "",
-                "resets": p.get("resets") or 0,
-                "level": p.get("level") or 0,
-                "member_level": "Member",
-                "guild": p.get("guild", guild_name),
-            }
-            for p in r.json()
-        ]
+    members = [
+        {
+            "name": p["nick_mudomix"],
+            "char_class": p.get("char_class") or "",
+            "resets": p.get("resets") or 0,
+            "level": p.get("level") or 0,
+            "member_level": "Member",
+            "guild": p.get("guild", guild_name),
+        }
+        for p in profiles
+    ]
     return {"name": guild_name, "master": "", "points": 0, "member_count": len(members), "members": members}
 
 
@@ -211,17 +240,7 @@ async def get_all_members(
     db_sort = sort_by if sort_by in valid_sorts else "resets"
     direction = "desc" if order.lower() == "desc" else "asc"
 
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            headers=supabase_headers(),
-            params={
-                "select": "nick_mudomix,char_class,resets,level,guild",
-                "approved_at": "not.is.null",
-                "order": f"{db_sort}.{direction}",
-            },
-        )
-        profiles = r.json() if r.status_code == 200 else []
+    profiles = store.get_approved_members_sorted(db_sort, direction)
 
     return [
         {
@@ -251,7 +270,7 @@ async def get_rankings(
     _user: dict = Depends(require_auth),
 ):
     """Ranking baseado nos perfis aprovados da plataforma."""
-    profiles = await get_approved_profiles()
+    profiles = get_approved_profiles()
     members = [
         {
             "name": p["nick_mudomix"],
@@ -275,14 +294,14 @@ async def get_alliance_rankings(_user: dict = Depends(require_auth)):
 
 @app.post("/api/refresh")
 async def force_refresh(_user: dict = Depends(require_auth)):
-    """Compatibilidade — dados já são sempre frescos do Supabase."""
+    """Compatibilidade — dados já são sempre frescos do SQL Server."""
     return {"message": "Dados atualizados", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 @app.get("/api/stats/alliance")
 async def get_alliance_stats(_user: dict = Depends(require_auth)):
     """Estatísticas gerais da aliança baseadas nos perfis aprovados."""
-    profiles = await get_approved_profiles()
+    profiles = get_approved_profiles()
     alliance = profiles_to_alliance(profiles)
     all_members = [m for g in alliance["guilds"] for m in g["members"]]
 
@@ -319,17 +338,11 @@ class ProfilePayload(BaseModel):
 @app.get("/api/profile/me")
 async def get_my_profile(user: dict = Depends(require_auth)):
     """Retorna o perfil do usuário autenticado."""
-    clerk_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            headers=supabase_headers(),
-            params={"clerk_id": f"eq.{clerk_id}", "select": "*", "limit": "1"},
-        )
-        rows = resp.json()
-        if not rows:
-            raise HTTPException(status_code=404, detail="Perfil não encontrado")
-        return rows[0]
+    user_id = user.get("sub")
+    profile = store.get_profile_by_user_id(user_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Perfil não encontrado")
+    return profile
 
 
 @app.post("/api/profile")
@@ -337,27 +350,25 @@ async def save_profile(
     body: ProfilePayload,
     user: dict = Depends(require_auth),
 ):
-    """Cria ou atualiza o perfil de um usuário Clerk no Supabase."""
-    clerk_id = user.get("sub")
-    if not clerk_id:
-        raise HTTPException(status_code=401, detail="clerk_id ausente no token")
+    """Cria ou atualiza o perfil de um usuário autenticado."""
+    user_id = user.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="user_id ausente no token")
 
-    # Telefone é obrigatório (formato de celular brasileiro)
     phone_digits = re.sub(r"\D", "", body.phone or "")
     if len(phone_digits) < 10 or len(phone_digits) > 11:
         raise HTTPException(status_code=400, detail="Telefone inválido. Use o formato (99) 99999-9999.")
 
-    # Verifica se o Discord ID do usuário está no servidor da guilda
     if body.discord_id:
         in_guild = await is_in_discord_guild(body.discord_id)
         if not in_guild:
             raise HTTPException(
                 status_code=403,
-                detail="Você precisa ser membro do servidor Discord da Euphoria para se cadastrar."
+                detail="Você precisa ser membro do servidor Discord da Euphoria para se cadastrar.",
             )
 
     record = {
-        "clerk_id": clerk_id,
+        "user_id": user_id,
         "nick_mudomix": body.nick_mudomix,
         "guild": body.guild,
         "phone": body.phone.strip(),
@@ -367,7 +378,6 @@ async def save_profile(
         "role": "pending",
     }
 
-    # Tenta buscar dados do personagem para popular char_class, resets, level
     char_data = await scrape_character(body.nick_mudomix)
     if char_data and not char_data.get("profile_blocked"):
         record["char_class"] = char_data.get("char_class", "")
@@ -375,14 +385,10 @@ async def save_profile(
         record["level"] = char_data.get("level", 0)
         record["last_synced"] = datetime.now(timezone.utc).isoformat()
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            headers={**supabase_headers(), "Prefer": "resolution=merge-duplicates,return=representation"},
-            json=record,
-        )
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=500, detail=f"Erro ao salvar perfil: {resp.text}")
+    try:
+        store.upsert_profile(record)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Erro ao salvar perfil: {exc}") from exc
 
     return {"ok": True}
 
@@ -397,19 +403,10 @@ async def get_raffle_history(
 ):
     """Retorna o histórico de sorteios (paginado)."""
     limit = max(1, min(limit, 200))
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/raffle_history",
-            headers=supabase_headers(),
-            params={
-                "order": "created_at.desc",
-                "limit": str(limit),
-                "offset": str(offset),
-            },
-        )
-        if resp.status_code >= 400:
-            return []
-    return resp.json()
+    try:
+        return store.list_raffle_history(limit, offset)
+    except Exception:
+        return []
 
 
 class RaffleEntry(BaseModel):
@@ -419,34 +416,20 @@ class RaffleEntry(BaseModel):
 
 
 @app.post("/api/raffle/save")
-async def save_raffle(body: RaffleEntry, _user: dict = Depends(require_auth)):
+async def save_raffle(body: RaffleEntry, user: dict = Depends(require_auth)):
     """Salva um sorteio no histórico."""
-    clerk_id = _user.get("sub")
-    async with httpx.AsyncClient() as client:
-        # Busca nick do staff que fez o sorteio
-        conducted_by = None
-        prof_resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            headers=supabase_headers(),
-            params={"clerk_id": f"eq.{clerk_id}", "select": "nick_mudomix", "limit": "1"},
-        )
-        if prof_resp.status_code == 200 and prof_resp.json():
-            conducted_by = prof_resp.json()[0].get("nick_mudomix")
+    user_id = user.get("sub")
+    conducted_by = None
+    prof = store.get_requester_profile(user_id)
+    if prof:
+        conducted_by = prof.get("nick_mudomix")
 
-        resp = await client.post(
-            f"{SUPABASE_URL}/rest/v1/raffle_history",
-            headers={**supabase_headers(), "Prefer": "return=representation"},
-            json={
-                "prize": body.item,
-                "winner_nick": body.winner,
-                "conducted_by": conducted_by,
-                "participants": body.participants,
-            },
-        )
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=500, detail=f"Erro ao salvar: {resp.text}")
-    data = resp.json()
-    return data[0] if isinstance(data, list) and data else {"ok": True}
+    try:
+        row = store.insert_raffle_history(body.item, body.winner, conducted_by, body.participants)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Erro ao salvar: {exc}") from exc
+
+    return row if row else {"ok": True}
 
 
 # ── Profiles ───────────────────────────────────────────────────
@@ -454,56 +437,33 @@ async def save_raffle(body: RaffleEntry, _user: dict = Depends(require_auth)):
 @app.get("/api/profile/pending")
 async def get_pending_profiles(user: dict = Depends(require_auth)):
     """Retorna perfis aguardando aprovação (staff only)."""
-    clerk_id = user.get("sub")
-    # Verifica se o solicitante é staff/admin
-    async with httpx.AsyncClient() as client:
-        check = await client.get(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            headers=supabase_headers(),
-            params={"clerk_id": f"eq.{clerk_id}", "select": "role"},
-        )
-        rows = check.json()
-        if not rows or rows[0].get("role") not in ("staff", "admin"):
-            raise HTTPException(status_code=403, detail="Acesso restrito a staff")
-
-        resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            headers=supabase_headers(),
-            params={
-                "approved_at": "is.null",
-                "select": "clerk_id,discord_username,avatar_url,nick_mudomix,guild,role,created_at",
-                "order": "created_at.asc",
-            },
-        )
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=500, detail=resp.text)
-
-    return resp.json()
+    user_id = user.get("sub")
+    me = _get_requester_profile(user_id)
+    if me.get("role") not in ("staff", "admin"):
+        raise HTTPException(status_code=403, detail="Acesso restrito a staff")
+    return store.get_pending_profiles()
 
 
 # ── World Boss ────────────────────────────────────────────────────────────────
 
-from zoneinfo import ZoneInfo
-
 BRASILIA = ZoneInfo("America/Sao_Paulo")
 
-# Escala semanal dos bosses (weekday: 0=Seg, 1=Ter, 2=Qua, 3=Qui, 4=Sex, 5=Sab, 6=Dom)
 BOSS_SCHEDULE: dict[int, str | None] = {
     0: "Phoenix",
     1: "Hell Maine",
     2: "Phoenix",
     3: "Kayn",
-    4: None,          # Sexta — day off
+    4: None,
     5: "Hydra",
     6: "Zaikan",
 }
 
 BOSS_IMAGES: dict[str, str] = {
-    "Phoenix":   "🔥",
+    "Phoenix": "🔥",
     "Hell Maine": "🔮",
-    "Kayn":      "⚔️",
-    "Hydra":     "🐍",
-    "Zaikan":    "💀",
+    "Kayn": "⚔️",
+    "Hydra": "🐍",
+    "Zaikan": "💀",
 }
 
 
@@ -519,7 +479,6 @@ def today_boss() -> dict:
     boss_date = now_br.date().isoformat()
     event_time = now_br.replace(hour=20, minute=30, second=0, microsecond=0).isoformat()
 
-    # Check-in abre a meia-noite do dia do boss e fecha às 20:30
     checkin_open = boss_name is not None and (
         now_br.hour < 20 or (now_br.hour == 20 and now_br.minute < 30)
     )
@@ -532,6 +491,13 @@ def today_boss() -> dict:
         "checkin_open": checkin_open,
         "weekday": now_br.weekday(),
     }
+
+
+def _iso_week_start() -> str:
+    """Retorna a segunda-feira (início) da semana atual em Brasília, formato YYYY-MM-DD."""
+    now = get_brasilia_now()
+    monday = now.date().fromordinal(now.date().toordinal() - now.weekday())
+    return monday.isoformat()
 
 
 @app.get("/api/worldboss/today")
@@ -549,40 +515,22 @@ async def worldboss_checkin(user: dict = Depends(require_auth)):
     if not info["checkin_open"]:
         raise HTTPException(status_code=400, detail="Check-in encerrado para hoje.")
 
-    clerk_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        # Busca perfil do usuário
-        profile_resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            headers=supabase_headers(),
-            params={"clerk_id": f"eq.{clerk_id}", "select": "nick_mudomix,guild,char_class,role"},
-        )
-        rows = profile_resp.json()
-        if not rows:
-            raise HTTPException(status_code=404, detail="Perfil não encontrado.")
-        profile = rows[0]
-        if profile.get("role") not in ("member", "staff", "admin"):
-            raise HTTPException(status_code=403, detail="Perfil ainda não aprovado.")
+    user_id = user.get("sub")
+    profile = store.get_profile_by_user_id(user_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Perfil não encontrado.")
+    if profile.get("role") not in ("member", "staff", "admin"):
+        raise HTTPException(status_code=403, detail="Perfil ainda não aprovado.")
 
-        # Insere check-in (UPSERT para evitar duplicata)
-        resp = await client.post(
-            f"{SUPABASE_URL}/rest/v1/world_boss_checkins",
-            headers={**supabase_headers(), "Prefer": "resolution=ignore-duplicates,return=representation"},
-            params={"on_conflict": "clerk_id,boss_date"},
-            json={
-                "clerk_id": clerk_id,
-                "nick_mudomix": profile["nick_mudomix"],
-                "guild": profile.get("guild"),
-                "char_class": profile.get("char_class"),
-                "boss_date": info["boss_date"],
-                "boss_name": info["boss_name"],
-            },
-        )
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=500, detail=resp.text)
-        data = resp.json()
-        already_exists = len(data) == 0
-    return {"ok": True, "already_checked_in": already_exists}
+    is_new = store.insert_wb_checkin(
+        user_id,
+        profile["nick_mudomix"],
+        profile.get("guild"),
+        profile.get("char_class"),
+        info["boss_date"],
+        info["boss_name"],
+    )
+    return {"ok": True, "already_checked_in": not is_new}
 
 
 @app.delete("/api/worldboss/checkin")
@@ -592,18 +540,8 @@ async def worldboss_cancel_checkin(user: dict = Depends(require_auth)):
     if not info["checkin_open"]:
         raise HTTPException(status_code=400, detail="Check-in encerrado.")
 
-    clerk_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        resp = await client.delete(
-            f"{SUPABASE_URL}/rest/v1/world_boss_checkins",
-            headers=supabase_headers(),
-            params={
-                "clerk_id": f"eq.{clerk_id}",
-                "boss_date": f"eq.{info['boss_date']}",
-            },
-        )
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=500, detail=resp.text)
+    user_id = user.get("sub")
+    store.delete_wb_checkin(user_id, info["boss_date"])
     return {"ok": True}
 
 
@@ -615,41 +553,17 @@ async def get_worldboss_checkins(
     """Retorna todos os check-ins de uma data (padrão: hoje)."""
     if not date:
         date = get_brasilia_now().date().isoformat()
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/world_boss_checkins",
-            headers=supabase_headers(),
-            params={
-                "boss_date": f"eq.{date}",
-                "select": "id,nick_mudomix,guild,char_class,boss_name,created_at",
-                "order": "created_at.asc",
-            },
-        )
-        if resp.status_code >= 400:
-            return []
-        checkins = resp.json()
 
-        # Sempre usa a classe ATUAL do perfil (fonte de verdade), pois a staff
-        # pode ter editado a classe depois do check-in.
-        nicks = [c["nick_mudomix"] for c in checkins]
-        if nicks:
-            in_list = ",".join(f'"{n}"' for n in nicks)
-            pr = await client.get(
-                f"{SUPABASE_URL}/rest/v1/profiles",
-                headers=supabase_headers(),
-                params={
-                    "nick_mudomix": f"in.({in_list})",
-                    "select": "nick_mudomix,char_class",
-                },
-            )
-            class_map = {
-                p["nick_mudomix"]: p.get("char_class")
-                for p in (pr.json() if pr.status_code == 200 else [])
-            }
-            for c in checkins:
-                current = class_map.get(c["nick_mudomix"])
-                if current:
-                    c["char_class"] = current
+    checkins = store.list_wb_checkins(date)
+
+    nicks = [c["nick_mudomix"] for c in checkins]
+    if nicks:
+        class_map = store.get_classes_by_nicks(nicks)
+        for c in checkins:
+            current = class_map.get(c["nick_mudomix"])
+            if current:
+                c["char_class"] = current
+
     return checkins
 
 
@@ -660,106 +574,71 @@ async def get_worldboss_report(
 ):
     """Relatório de presença no World Boss: total de check-ins por membro e grade dos últimos N dias."""
     days = max(1, min(days, 90))
-    async with httpx.AsyncClient() as client:
-        clerk_id = user.get("sub")
-        await _get_requester_profile(client, clerk_id)  # garante autenticado/aprovado
+    user_id = user.get("sub")
+    _get_requester_profile(user_id)
 
-        today = get_brasilia_now().date()
-        start_date = (today.fromordinal(today.toordinal() - (days - 1))).isoformat()
+    today = get_brasilia_now().date()
+    start_date = (today.fromordinal(today.toordinal() - (days - 1))).isoformat()
 
-        resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/world_boss_checkins",
-            headers=supabase_headers(),
-            params={
-                "boss_date": f"gte.{start_date}",
-                "select": "nick_mudomix,char_class,boss_date,boss_name",
-                "order": "boss_date.asc",
-            },
-        )
-        checkins = resp.json() if resp.status_code == 200 else []
+    checkins = store.list_wb_checkins_since(start_date)
+    all_days = sorted({c["boss_date"] for c in checkins})
 
-        # Dias em que efetivamente houve boss (dias que aparecem em pelo menos 1 check-in ou hoje)
-        all_days = sorted({c["boss_date"] for c in checkins})
-
-        # Agrega por membro (usa set de dias para evitar contar duplicatas
-        # — ex: checkins duplicados no mesmo dia por reconexão com novo clerk_id)
-        by_member: dict[str, dict] = {}
-        for c in checkins:
-            nick = c["nick_mudomix"]
-            if nick not in by_member:
-                by_member[nick] = {
-                    "nick_mudomix": nick,
-                    "char_class": c.get("char_class") or "",
-                    "days": set(),
-                }
-            by_member[nick]["days"].add(c["boss_date"])
-
-        # Sempre usa a classe ATUAL do perfil
-        nicks = list(by_member.keys())
-        if nicks:
-            in_list = ",".join(f'"{n}"' for n in nicks)
-            pr = await client.get(
-                f"{SUPABASE_URL}/rest/v1/profiles",
-                headers=supabase_headers(),
-                params={"nick_mudomix": f"in.({in_list})", "select": "nick_mudomix,char_class"},
-            )
-            class_map = {
-                p["nick_mudomix"]: p.get("char_class")
-                for p in (pr.json() if pr.status_code == 200 else [])
+    by_member: dict[str, dict] = {}
+    for c in checkins:
+        nick = c["nick_mudomix"]
+        if nick not in by_member:
+            by_member[nick] = {
+                "nick_mudomix": nick,
+                "char_class": c.get("char_class") or "",
+                "days": set(),
             }
-            for nick, m in by_member.items():
-                current = class_map.get(nick)
-                if current:
-                    m["char_class"] = current
+        by_member[nick]["days"].add(c["boss_date"])
 
-        members = [
-            {
-                "nick_mudomix": m["nick_mudomix"],
-                "char_class": m["char_class"],
-                "total": len(m["days"]),
-                "attended_days": sorted(m["days"]),
-            }
-            for m in by_member.values()
-        ]
-        members.sort(key=lambda m: m["total"], reverse=True)
+    nicks = list(by_member.keys())
+    if nicks:
+        class_map = store.get_classes_by_nicks(nicks)
+        for nick, m in by_member.items():
+            current = class_map.get(nick)
+            if current:
+                m["char_class"] = current
+
+    members = [
+        {
+            "nick_mudomix": m["nick_mudomix"],
+            "char_class": m["char_class"],
+            "total": len(m["days"]),
+            "attended_days": sorted(m["days"]),
+        }
+        for m in by_member.values()
+    ]
+    members.sort(key=lambda m: m["total"], reverse=True)
 
     return {"days": all_days, "members": members, "range_start": start_date, "range_end": today.isoformat()}
 
 
 class PartiesPayload(BaseModel):
-    parties: list[dict]  # [{name: "PT1", members: ["player1", ...]}, ...]
+    parties: list[dict]
 
 
 @app.put("/api/worldboss/parties")
 async def save_worldboss_parties(body: PartiesPayload, user: dict = Depends(require_auth)):
     """Admin salva as partys do boss do dia."""
-    clerk_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        check = await client.get(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            headers=supabase_headers(),
-            params={"clerk_id": f"eq.{clerk_id}", "select": "role"},
-        )
-        rows = check.json()
-        if not rows or rows[0].get("role") not in ("staff", "admin"):
-            raise HTTPException(status_code=403, detail="Acesso restrito a staff/admin.")
+    user_id = user.get("sub")
+    me = _get_requester_profile(user_id)
+    if me.get("role") not in ("staff", "admin"):
+        raise HTTPException(status_code=403, detail="Acesso restrito a staff/admin.")
 
-        info = today_boss()
-        record = {
-            "boss_date": info["boss_date"],
-            "boss_name": info["boss_name"] or "off",
-            "parties": body.parties,
-            "updated_by": clerk_id,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-        resp = await client.post(
-            f"{SUPABASE_URL}/rest/v1/world_boss_parties",
-            headers={**supabase_headers(), "Prefer": "resolution=merge-duplicates,return=representation"},
-            params={"on_conflict": "boss_date"},
-            json=record,
+    info = today_boss()
+    try:
+        store.upsert_wb_parties(
+            info["boss_date"],
+            info["boss_name"] or "off",
+            body.parties,
+            user_id,
         )
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=500, detail=resp.text)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     return {"ok": True}
 
 
@@ -771,25 +650,16 @@ async def get_worldboss_parties(
     """Retorna as partys configuradas para uma data (padrão: hoje)."""
     if not date:
         date = get_brasilia_now().date().isoformat()
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/world_boss_parties",
-            headers=supabase_headers(),
-            params={"boss_date": f"eq.{date}", "select": "parties,boss_name,updated_at"},
-        )
-        if resp.status_code >= 400:
-            return {"parties": [], "boss_name": None}
-        data = resp.json()
+
+    data = store.get_wb_parties(date)
     if data:
-        return data[0]
+        return data
     return {"parties": [], "boss_name": None}
 
 
-# ── Profiles ─────────────────────────────────────────────────────────────────
-
 class ApprovePayload(BaseModel):
-    clerk_id: str
-    role: str  # "member" | "staff" | "admin" | "rejected"
+    user_id: str
+    role: str
 
 
 @app.post("/api/profile/approve")
@@ -799,33 +669,21 @@ async def approve_profile(
 ):
     """Aprova ou rejeita um perfil (staff only)."""
     requester_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        check = await client.get(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            headers=supabase_headers(),
-            params={"clerk_id": f"eq.{requester_id}", "select": "role"},
-        )
-        rows = check.json()
-        if not rows or rows[0].get("role") not in ("staff", "admin"):
-            raise HTTPException(status_code=403, detail="Acesso restrito a staff")
+    me = _get_requester_profile(requester_id)
+    if me.get("role") not in ("staff", "admin"):
+        raise HTTPException(status_code=403, detail="Acesso restrito a staff")
 
-        update_data: dict = {"role": body.role}
-        if body.role not in ("pending", "rejected"):
-            update_data["approved_at"] = datetime.now(timezone.utc).isoformat()
+    approved_at = None
+    if body.role not in ("pending", "rejected"):
+        approved_at = datetime.now(timezone.utc).isoformat()
 
-        resp = await client.patch(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            headers=supabase_headers(),
-            params={"clerk_id": f"eq.{body.clerk_id}"},
-            json=update_data,
-        )
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=500, detail=resp.text)
+    try:
+        store.approve_profile(body.user_id, body.role, approved_at)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return {"ok": True}
 
-
-# ── Update Member (Admin) ─────────────────────────────────────────────────────
 
 class UpdateMemberPayload(BaseModel):
     nick_mudomix: str
@@ -842,35 +700,25 @@ async def update_member(
 ):
     """Atualiza dados de um membro (staff/admin only)."""
     requester_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        check = await client.get(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            headers=supabase_headers(),
-            params={"clerk_id": f"eq.{requester_id}", "select": "role"},
-        )
-        rows = check.json()
-        if not rows or rows[0].get("role") not in ("staff", "admin"):
-            raise HTTPException(status_code=403, detail="Acesso restrito a staff")
+    me = _get_requester_profile(requester_id)
+    if me.get("role") not in ("staff", "admin"):
+        raise HTTPException(status_code=403, detail="Acesso restrito a staff")
 
-        update_data: dict = {}
-        if body.char_class is not None:
-            update_data["char_class"] = body.char_class
-        if body.resets is not None:
-            update_data["resets"] = body.resets
-        if body.level is not None:
-            update_data["level"] = body.level
+    update_data: dict = {}
+    if body.char_class is not None:
+        update_data["char_class"] = body.char_class
+    if body.resets is not None:
+        update_data["resets"] = body.resets
+    if body.level is not None:
+        update_data["level"] = body.level
 
-        if not update_data:
-            raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-        resp = await client.patch(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            headers=supabase_headers(),
-            params={"nick_mudomix": f"eq.{nick}"},
-            json=update_data,
-        )
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=500, detail=resp.text)
+    try:
+        store.update_member_by_nick(nick, update_data)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return {"ok": True}
 
@@ -881,25 +729,11 @@ async def get_all_members_admin(
 ):
     """Lista TODOS os membros (incluindo pending) para staff/admin."""
     requester_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        check = await client.get(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            headers=supabase_headers(),
-            params={"clerk_id": f"eq.{requester_id}", "select": "role"},
-        )
-        rows = check.json()
-        if not rows or rows[0].get("role") not in ("staff", "admin"):
-            raise HTTPException(status_code=403, detail="Acesso restrito a staff")
+    me = _get_requester_profile(requester_id)
+    if me.get("role") not in ("staff", "admin"):
+        raise HTTPException(status_code=403, detail="Acesso restrito a staff")
 
-        resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            headers=supabase_headers(),
-            params={
-                "select": "nick_mudomix,char_class,resets,level,role,discord_username,approved_at",
-                "order": "nick_mudomix.asc",
-            },
-        )
-        profiles = resp.json() if resp.status_code == 200 else []
+    profiles = store.get_all_profiles_admin()
 
     return [
         {
@@ -924,86 +758,38 @@ class EquipmentPayload(BaseModel):
 @app.get("/api/members/{nick}/profile")
 async def get_member_profile(nick: str, user: dict = Depends(require_auth)):
     """Retorna o perfil interno (não-scraping) de um membro para visualização de qualquer usuário aprovado."""
-    clerk_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        me = await _get_requester_profile(client, clerk_id)
-        _require_member(me)
+    user_id = user.get("sub")
+    me = _get_requester_profile(user_id)
+    _require_member(me)
 
-        resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            headers=supabase_headers(),
-            params={
-                "nick_mudomix": f"eq.{nick}",
-                "select": "nick_mudomix,guild,char_class,resets,level,role,avatar_url,equip_set,equip_weapon,equip_accessory",
-                "limit": "1",
-            },
-        )
-        rows = resp.json() if resp.status_code == 200 else []
-        if not rows:
-            raise HTTPException(status_code=404, detail="Membro não encontrado")
-        member = rows[0]
-        member["is_me"] = member.get("nick_mudomix", "").lower() == (me.get("nick_mudomix") or "").lower()
+    member = store.get_member_profile_by_nick(nick)
+    if not member:
+        raise HTTPException(status_code=404, detail="Membro não encontrado")
+    member["is_me"] = member.get("nick_mudomix", "").lower() == (me.get("nick_mudomix") or "").lower()
     return member
 
 
 @app.patch("/api/members/{nick}/equipment")
 async def update_member_equipment(nick: str, body: EquipmentPayload, user: dict = Depends(require_auth)):
     """Membro atualiza seu próprio equipamento (set/shield, arma, acessório). Staff pode editar de qualquer um."""
-    clerk_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        me = await _get_requester_profile(client, clerk_id)
-        _require_member(me)
-        is_staff = me.get("role") in ("staff", "admin")
-        is_owner = (me.get("nick_mudomix") or "").lower() == nick.lower()
-        if not is_staff and not is_owner:
-            raise HTTPException(status_code=403, detail="Você só pode editar seu próprio equipamento.")
+    user_id = user.get("sub")
+    me = _get_requester_profile(user_id)
+    _require_member(me)
+    is_staff = me.get("role") in ("staff", "admin")
+    is_owner = (me.get("nick_mudomix") or "").lower() == nick.lower()
+    if not is_staff and not is_owner:
+        raise HTTPException(status_code=403, detail="Você só pode editar seu próprio equipamento.")
 
-        update_data = {k: v for k, v in body.model_dump().items() if v is not None}
-        if not update_data:
-            raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
+    update_data = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-        resp = await client.patch(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            headers=supabase_headers(),
-            params={"nick_mudomix": f"eq.{nick}"},
-            json=update_data,
-        )
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=500, detail=resp.text)
+    try:
+        store.update_equipment_by_nick(nick, update_data)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     return {"ok": True}
-
-
-# ── Helpers de autorização e perfil ──────────────────────────────────────────
-
-async def _get_requester_profile(client: httpx.AsyncClient, clerk_id: str) -> dict:
-    """Retorna o perfil do usuário autenticado (nick, role, char_class)."""
-    resp = await client.get(
-        f"{SUPABASE_URL}/rest/v1/profiles",
-        headers=supabase_headers(),
-        params={"clerk_id": f"eq.{clerk_id}", "select": "nick_mudomix,char_class,role,approved_at", "limit": "1"},
-    )
-    rows = resp.json() if resp.status_code == 200 else []
-    if not rows:
-        raise HTTPException(status_code=404, detail="Perfil não encontrado")
-    return rows[0]
-
-
-def _require_staff(profile: dict):
-    if profile.get("role") not in ("staff", "admin"):
-        raise HTTPException(status_code=403, detail="Acesso restrito a staff")
-
-
-def _require_member(profile: dict):
-    """Permite qualquer membro aprovado (não exige staff)."""
-    if profile.get("approved_at") is None and profile.get("role") not in ("member", "staff", "admin"):
-        raise HTTPException(status_code=403, detail="Apenas membros aprovados.")
-
-
-def _iso_week_start() -> str:
-    """Retorna a segunda-feira (início) da semana atual em Brasília, formato YYYY-MM-DD."""
-    now = get_brasilia_now()
-    monday = now.date().fromordinal(now.date().toordinal() - now.weekday())
-    return monday.isoformat()
 
 
 # ── Sorteio (self-service) ───────────────────────────────────────────────────
@@ -1015,27 +801,15 @@ class RaffleCreatePayload(BaseModel):
 @app.get("/api/raffle/active")
 async def get_active_raffle(user: dict = Depends(require_auth)):
     """Retorna o sorteio ativo, seus participantes e se o usuário já entrou."""
-    clerk_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        me = await _get_requester_profile(client, clerk_id)
+    user_id = user.get("sub")
+    me = _get_requester_profile(user_id)
 
-        r = await client.get(
-            f"{SUPABASE_URL}/rest/v1/raffles",
-            headers=supabase_headers(),
-            params={"status": "eq.open", "select": "*", "order": "created_at.desc", "limit": "1"},
-        )
-        raffles = r.json() if r.status_code == 200 else []
-        if not raffles:
-            return {"raffle": None, "participants": [], "joined": False, "my_nick": me.get("nick_mudomix")}
+    raffle = store.get_open_raffle()
+    if not raffle:
+        return {"raffle": None, "participants": [], "joined": False, "my_nick": me.get("nick_mudomix")}
 
-        raffle = raffles[0]
-        p = await client.get(
-            f"{SUPABASE_URL}/rest/v1/raffle_entries",
-            headers=supabase_headers(),
-            params={"raffle_id": f"eq.{raffle['id']}", "select": "nick_mudomix,clerk_id,created_at", "order": "created_at.asc"},
-        )
-        entries = p.json() if p.status_code == 200 else []
-        joined = any(e.get("clerk_id") == clerk_id for e in entries)
+    entries = store.list_raffle_entries(raffle["id"])
+    joined = any(e.get("user_id") == user_id for e in entries)
 
     return {
         "raffle": raffle,
@@ -1048,130 +822,86 @@ async def get_active_raffle(user: dict = Depends(require_auth)):
 @app.post("/api/raffle/create")
 async def create_raffle(body: RaffleCreatePayload, user: dict = Depends(require_auth)):
     """Qualquer membro abre um novo sorteio (fecha qualquer sorteio anterior aberto)."""
-    clerk_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        me = await _get_requester_profile(client, clerk_id)
-        _require_member(me)
+    user_id = user.get("sub")
+    me = _get_requester_profile(user_id)
+    _require_member(me)
 
-        # Fecha sorteios abertos anteriores
-        await client.patch(
-            f"{SUPABASE_URL}/rest/v1/raffles",
-            headers=supabase_headers(),
-            params={"status": "eq.open"},
-            json={"status": "closed"},
-        )
+    store.close_open_raffles()
+    try:
+        data = store.create_raffle(body.prize, user_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-        resp = await client.post(
-            f"{SUPABASE_URL}/rest/v1/raffles",
-            headers={**supabase_headers(), "Prefer": "return=representation"},
-            json={"prize": body.prize, "status": "open", "created_by": clerk_id},
-        )
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=500, detail=resp.text)
-        data = resp.json()
-    return data[0] if isinstance(data, list) and data else {"ok": True}
+    return data if data else {"ok": True}
 
 
 @app.post("/api/raffle/edit")
 async def edit_raffle(body: RaffleCreatePayload, user: dict = Depends(require_auth)):
     """Qualquer membro edita o prêmio do sorteio ativo."""
-    clerk_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        me = await _get_requester_profile(client, clerk_id)
-        _require_member(me)
+    user_id = user.get("sub")
+    me = _get_requester_profile(user_id)
+    _require_member(me)
 
-        r = await client.get(
-            f"{SUPABASE_URL}/rest/v1/raffles",
-            headers=supabase_headers(),
-            params={"status": "eq.open", "select": "id", "order": "created_at.desc", "limit": "1"},
-        )
-        raffles = r.json() if r.status_code == 200 else []
-        if not raffles:
-            raise HTTPException(status_code=400, detail="Nenhum sorteio aberto para editar.")
+    raffle = store.get_open_raffle()
+    if not raffle:
+        raise HTTPException(status_code=400, detail="Nenhum sorteio aberto para editar.")
 
-        resp = await client.patch(
-            f"{SUPABASE_URL}/rest/v1/raffles",
-            headers=supabase_headers(),
-            params={"id": f"eq.{raffles[0]['id']}"},
-            json={"prize": body.prize},
-        )
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=500, detail=resp.text)
+    try:
+        store.update_raffle_prize(raffle["id"], body.prize)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     return {"ok": True}
 
 
 @app.post("/api/raffle/close")
 async def close_raffle(user: dict = Depends(require_auth)):
     """Qualquer membro fecha/cancela o sorteio ativo sem sortear vencedor."""
-    clerk_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        me = await _get_requester_profile(client, clerk_id)
-        _require_member(me)
+    user_id = user.get("sub")
+    me = _get_requester_profile(user_id)
+    _require_member(me)
 
-        resp = await client.patch(
-            f"{SUPABASE_URL}/rest/v1/raffles",
-            headers=supabase_headers(),
-            params={"status": "eq.open"},
-            json={"status": "closed"},
-        )
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=500, detail=resp.text)
+    try:
+        store.close_open_raffles()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     return {"ok": True}
 
 
 @app.post("/api/raffle/join")
 async def join_raffle(user: dict = Depends(require_auth)):
     """Usuário logado entra no sorteio ativo com o PRÓPRIO nick."""
-    clerk_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        me = await _get_requester_profile(client, clerk_id)
-        if me.get("approved_at") is None and me.get("role") not in ("member", "staff", "admin"):
-            raise HTTPException(status_code=403, detail="Apenas membros aprovados podem participar.")
+    user_id = user.get("sub")
+    me = _get_requester_profile(user_id)
+    if me.get("approved_at") is None and me.get("role") not in ("member", "staff", "admin"):
+        raise HTTPException(status_code=403, detail="Apenas membros aprovados podem participar.")
 
-        nick = me.get("nick_mudomix")
-        if not nick:
-            raise HTTPException(status_code=400, detail="Seu perfil não tem nick definido.")
+    nick = me.get("nick_mudomix")
+    if not nick:
+        raise HTTPException(status_code=400, detail="Seu perfil não tem nick definido.")
 
-        r = await client.get(
-            f"{SUPABASE_URL}/rest/v1/raffles",
-            headers=supabase_headers(),
-            params={"status": "eq.open", "select": "id", "order": "created_at.desc", "limit": "1"},
-        )
-        raffles = r.json() if r.status_code == 200 else []
-        if not raffles:
-            raise HTTPException(status_code=400, detail="Nenhum sorteio aberto no momento.")
-        raffle_id = raffles[0]["id"]
+    raffle = store.get_open_raffle()
+    if not raffle:
+        raise HTTPException(status_code=400, detail="Nenhum sorteio aberto no momento.")
 
-        resp = await client.post(
-            f"{SUPABASE_URL}/rest/v1/raffle_entries",
-            headers={**supabase_headers(), "Prefer": "resolution=ignore-duplicates,return=representation"},
-            params={"on_conflict": "raffle_id,clerk_id"},
-            json={"raffle_id": raffle_id, "clerk_id": clerk_id, "nick_mudomix": nick},
-        )
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=500, detail=resp.text)
+    try:
+        store.join_raffle(raffle["id"], user_id, nick)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     return {"ok": True, "nick": nick}
 
 
 @app.post("/api/raffle/leave")
 async def leave_raffle(user: dict = Depends(require_auth)):
     """Usuário sai do sorteio ativo."""
-    clerk_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            f"{SUPABASE_URL}/rest/v1/raffles",
-            headers=supabase_headers(),
-            params={"status": "eq.open", "select": "id", "order": "created_at.desc", "limit": "1"},
-        )
-        raffles = r.json() if r.status_code == 200 else []
-        if not raffles:
-            return {"ok": True}
-        raffle_id = raffles[0]["id"]
-        await client.delete(
-            f"{SUPABASE_URL}/rest/v1/raffle_entries",
-            headers=supabase_headers(),
-            params={"raffle_id": f"eq.{raffle_id}", "clerk_id": f"eq.{clerk_id}"},
-        )
+    user_id = user.get("sub")
+    raffle = store.get_open_raffle()
+    if not raffle:
+        return {"ok": True}
+
+    store.leave_raffle(raffle["id"], user_id)
     return {"ok": True}
 
 
@@ -1182,54 +912,32 @@ class RaffleDrawPayload(BaseModel):
 @app.post("/api/raffle/draw")
 async def draw_raffle(body: RaffleDrawPayload, user: dict = Depends(require_auth)):
     """Registra o vencedor e fecha o sorteio ativo."""
-    clerk_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        me = await _get_requester_profile(client, clerk_id)
-        _require_member(me)
+    user_id = user.get("sub")
+    me = _get_requester_profile(user_id)
+    _require_member(me)
 
-        r = await client.get(
-            f"{SUPABASE_URL}/rest/v1/raffles",
-            headers=supabase_headers(),
-            params={"status": "eq.open", "select": "id,prize", "order": "created_at.desc", "limit": "1"},
-        )
-        raffles = r.json() if r.status_code == 200 else []
-        if not raffles:
-            raise HTTPException(status_code=400, detail="Nenhum sorteio aberto.")
-        raffle = raffles[0]
+    raffle = store.get_open_raffle()
+    if not raffle:
+        raise HTTPException(status_code=400, detail="Nenhum sorteio aberto.")
 
-        p = await client.get(
-            f"{SUPABASE_URL}/rest/v1/raffle_entries",
-            headers=supabase_headers(),
-            params={"raffle_id": f"eq.{raffle['id']}", "select": "nick_mudomix"},
-        )
-        participants = [e["nick_mudomix"] for e in (p.json() if p.status_code == 200 else [])]
+    entries = store.list_raffle_entries(raffle["id"])
+    participants = [e["nick_mudomix"] for e in entries]
 
-        # Marca sorteio como sorteado
-        await client.patch(
-            f"{SUPABASE_URL}/rest/v1/raffles",
-            headers=supabase_headers(),
-            params={"id": f"eq.{raffle['id']}"},
-            json={"status": "drawn", "winner_nick": body.winner},
-        )
+    store.draw_raffle(raffle["id"], body.winner)
+    store.insert_raffle_history(
+        raffle["prize"],
+        body.winner,
+        me.get("nick_mudomix"),
+        participants,
+    )
 
-        # Salva no histórico
-        await client.post(
-            f"{SUPABASE_URL}/rest/v1/raffle_history",
-            headers={**supabase_headers(), "Prefer": "return=representation"},
-            json={
-                "prize": raffle["prize"],
-                "winner_nick": body.winner,
-                "conducted_by": me.get("nick_mudomix"),
-                "participants": participants,
-            },
-        )
     return {"ok": True}
 
 
 # ── Doações de Zen ───────────────────────────────────────────────────────────
 
 class DonationConfigPayload(BaseModel):
-    weekly_amount: str  # ex: "100kk"
+    weekly_amount: str
 
 
 class DonationTogglePayload(BaseModel):
@@ -1240,39 +948,13 @@ class DonationTogglePayload(BaseModel):
 @app.get("/api/donations")
 async def get_donations(user: dict = Depends(require_auth)):
     """Retorna config da semana + lista de membros com status de doação."""
-    clerk_id = user.get("sub")
+    user_id = user.get("sub")
     week = _iso_week_start()
-    async with httpx.AsyncClient() as client:
-        await _get_requester_profile(client, clerk_id)  # garante autenticado
+    _get_requester_profile(user_id)
 
-        # Config atual (valor semanal)
-        cfg = await client.get(
-            f"{SUPABASE_URL}/rest/v1/donation_config",
-            headers=supabase_headers(),
-            params={"select": "weekly_amount", "order": "id.desc", "limit": "1"},
-        )
-        cfg_rows = cfg.json() if cfg.status_code == 200 else []
-        weekly_amount = cfg_rows[0]["weekly_amount"] if cfg_rows else "100kk"
-
-        # Membros aprovados
-        m = await client.get(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            headers=supabase_headers(),
-            params={
-                "select": "nick_mudomix,char_class",
-                "approved_at": "not.is.null",
-                "order": "nick_mudomix.asc",
-            },
-        )
-        members = m.json() if m.status_code == 200 else []
-
-        # Doações da semana atual
-        d = await client.get(
-            f"{SUPABASE_URL}/rest/v1/donations",
-            headers=supabase_headers(),
-            params={"week_start": f"eq.{week}", "select": "nick_mudomix"},
-        )
-        paid_nicks = {row["nick_mudomix"] for row in (d.json() if d.status_code == 200 else [])}
+    weekly_amount = store.get_donation_weekly_amount() or "100kk"
+    members = store.list_approved_nicks_classes()
+    paid_nicks = {row["nick_mudomix"] for row in store.list_donations_for_week(week)}
 
     return {
         "week_start": week,
@@ -1291,57 +973,43 @@ async def get_donations(user: dict = Depends(require_auth)):
 @app.post("/api/donations/config")
 async def set_donation_config(body: DonationConfigPayload, user: dict = Depends(require_auth)):
     """Staff altera o valor semanal de doação."""
-    clerk_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        me = await _get_requester_profile(client, clerk_id)
-        _require_staff(me)
-        resp = await client.post(
-            f"{SUPABASE_URL}/rest/v1/donation_config",
-            headers={**supabase_headers(), "Prefer": "return=representation"},
-            json={"weekly_amount": body.weekly_amount, "updated_by": clerk_id},
-        )
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=500, detail=resp.text)
+    user_id = user.get("sub")
+    me = _get_requester_profile(user_id)
+    _require_staff(me)
+
+    try:
+        store.insert_donation_config(body.weekly_amount, user_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     return {"ok": True}
 
 
 @app.post("/api/donations/toggle")
 async def toggle_donation(body: DonationTogglePayload, user: dict = Depends(require_auth)):
     """Staff marca/desmarca a doação de um membro na semana atual."""
-    clerk_id = user.get("sub")
+    user_id = user.get("sub")
     week = _iso_week_start()
-    async with httpx.AsyncClient() as client:
-        me = await _get_requester_profile(client, clerk_id)
-        _require_staff(me)
+    me = _get_requester_profile(user_id)
+    _require_staff(me)
 
+    try:
         if body.paid:
-            resp = await client.post(
-                f"{SUPABASE_URL}/rest/v1/donations",
-                headers={**supabase_headers(), "Prefer": "resolution=ignore-duplicates,return=representation"},
-                params={"on_conflict": "week_start,nick_mudomix"},
-                json={
-                    "week_start": week,
-                    "nick_mudomix": body.nick_mudomix,
-                    "marked_by": me.get("nick_mudomix"),
-                },
-            )
-            if resp.status_code >= 400:
-                raise HTTPException(status_code=500, detail=resp.text)
+            store.mark_donation(week, body.nick_mudomix, me.get("nick_mudomix"))
         else:
-            await client.delete(
-                f"{SUPABASE_URL}/rest/v1/donations",
-                headers=supabase_headers(),
-                params={"week_start": f"eq.{week}", "nick_mudomix": f"eq.{body.nick_mudomix}"},
-            )
+            store.unmark_donation(week, body.nick_mudomix)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     return {"ok": True}
 
 
-# ── Contas & Alts (espionagem/organização de alts) ───────────────────────────
+# ── Contas & Alts ───────────────────────────────────────────────────────────
 
 class AltCreatePayload(BaseModel):
     main_nick: str
     alt_nick: Optional[str] = None
-    side: str = "euphoria"  # "euphoria" | "blacklist"
+    side: str = "euphoria"
     main_class: Optional[str] = None
     notes: Optional[str] = None
 
@@ -1358,93 +1026,57 @@ class AltsVisibilityPayload(BaseModel):
     visible_to_members: bool
 
 
-async def _get_alts_visibility(client: httpx.AsyncClient) -> bool:
-    r = await client.get(
-        f"{SUPABASE_URL}/rest/v1/alts_config",
-        headers=supabase_headers(),
-        params={"select": "visible_to_members", "order": "id.desc", "limit": "1"},
-    )
-    rows = r.json() if r.status_code == 200 else []
-    return bool(rows[0]["visible_to_members"]) if rows else False
-
-
 @app.get("/api/alts/visibility")
 async def get_alts_visibility(user: dict = Depends(require_auth)):
     """Retorna se a lista de alts está visível para membros comuns (qualquer autenticado pode checar)."""
-    clerk_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        me = await _get_requester_profile(client, clerk_id)
-        is_staff = me.get("role") in ("staff", "admin")
-        visible = await _get_alts_visibility(client)
+    user_id = user.get("sub")
+    me = _get_requester_profile(user_id)
+    is_staff = me.get("role") in ("staff", "admin")
+    visible = _get_alts_visibility()
     return {"visible_to_members": visible, "is_staff": is_staff}
 
 
 @app.post("/api/alts/visibility")
 async def set_alts_visibility(body: AltsVisibilityPayload, user: dict = Depends(require_auth)):
     """Staff decide se os membros comuns podem ver a lista de alts."""
-    clerk_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        me = await _get_requester_profile(client, clerk_id)
-        _require_staff(me)
-        resp = await client.post(
-            f"{SUPABASE_URL}/rest/v1/alts_config",
-            headers={**supabase_headers(), "Prefer": "return=representation"},
-            json={"visible_to_members": body.visible_to_members, "updated_by": clerk_id},
-        )
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=500, detail=resp.text)
+    user_id = user.get("sub")
+    me = _get_requester_profile(user_id)
+    _require_staff(me)
+
+    try:
+        store.insert_alts_visibility(body.visible_to_members, user_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     return {"ok": True}
 
 
 @app.get("/api/alts")
 async def list_alts(user: dict = Depends(require_auth)):
     """Lista contas/alts. Staff sempre vê tudo; membros veem tudo se liberado, senão só suas próprias."""
-    clerk_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        me = await _get_requester_profile(client, clerk_id)
-        my_nick = me.get("nick_mudomix")
-        is_staff = me.get("role") in ("staff", "admin")
-        is_approved = me.get("approved_at") is not None
-        visible = await _get_alts_visibility(client)
+    user_id = user.get("sub")
+    me = _get_requester_profile(user_id)
+    my_nick = me.get("nick_mudomix")
+    is_staff = me.get("role") in ("staff", "admin")
+    is_approved = me.get("approved_at") is not None
+    visible = _get_alts_visibility()
 
-        if not is_staff and not is_approved:
-            raise HTTPException(status_code=403, detail="Apenas membros aprovados podem acessar.")
+    if not is_staff and not is_approved:
+        raise HTTPException(status_code=403, detail="Apenas membros aprovados podem acessar.")
 
-        # Se não é staff e não está liberado, retorna apenas as contas do próprio membro
-        restricted_mode = not is_staff and not visible
+    restricted_mode = not is_staff and not visible
 
-        if restricted_mode:
-            # Apenas as contas onde o main_nick é o nick do membro logado
-            resp = await client.get(
-                f"{SUPABASE_URL}/rest/v1/alt_accounts",
-                headers=supabase_headers(),
-                params={"select": "*", "main_nick": f"ilike.{my_nick}", "side": "eq.euphoria", "order": "main_nick.asc"},
-            )
-        else:
-            resp = await client.get(
-                f"{SUPABASE_URL}/rest/v1/alt_accounts",
-                headers=supabase_headers(),
-                params={"select": "*", "order": "main_nick.asc"},
-            )
-        entries = resp.json() if resp.status_code == 200 else []
+    if restricted_mode:
+        entries = store.list_alts_for_main(my_nick)
+    else:
+        entries = store.list_alts_all()
 
-        # Para o lado "euphoria", a classe da main vem sempre do perfil atual
-        # (fonte de verdade), pois pode ter sido editada depois do vínculo.
-        euphoria_mains = {e["main_nick"] for e in entries if e.get("side") == "euphoria"}
-        if euphoria_mains:
-            in_list = ",".join(f'"{n}"' for n in euphoria_mains)
-            pr = await client.get(
-                f"{SUPABASE_URL}/rest/v1/profiles",
-                headers=supabase_headers(),
-                params={"nick_mudomix": f"in.({in_list})", "select": "nick_mudomix,char_class"},
-            )
-            class_map = {
-                p["nick_mudomix"]: p.get("char_class")
-                for p in (pr.json() if pr.status_code == 200 else [])
-            }
-            for e in entries:
-                if e.get("side") == "euphoria":
-                    e["main_class"] = class_map.get(e["main_nick"]) or e.get("main_class")
+    euphoria_mains = {e["main_nick"] for e in entries if e.get("side") == "euphoria"}
+    if euphoria_mains:
+        class_map = store.get_classes_by_nicks(list(euphoria_mains))
+        for e in entries:
+            if e.get("side") == "euphoria":
+                e["main_class"] = class_map.get(e["main_nick"]) or e.get("main_class")
 
     return {
         "visible_to_members": visible,
@@ -1458,137 +1090,101 @@ async def list_alts(user: dict = Depends(require_auth)):
 @app.post("/api/alts")
 async def create_alt(body: AltCreatePayload, user: dict = Depends(require_auth)):
     """Membro cadastra uma conta alt vinculada a um jogador (ou só a main, sem alt ainda)."""
-    clerk_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        me = await _get_requester_profile(client, clerk_id)
-        _require_member(me)
-        my_nick = me.get("nick_mudomix")
-        is_staff = me.get("role") in ("staff", "admin")
-        visible = await _get_alts_visibility(client)
-        restricted_mode = not is_staff and not visible
+    user_id = user.get("sub")
+    me = _get_requester_profile(user_id)
+    _require_member(me)
+    my_nick = me.get("nick_mudomix")
+    is_staff = me.get("role") in ("staff", "admin")
+    visible = _get_alts_visibility()
+    restricted_mode = not is_staff and not visible
 
-        if body.side not in ("euphoria", "blacklist"):
-            raise HTTPException(status_code=400, detail="side deve ser 'euphoria' ou 'blacklist'")
+    if body.side not in ("euphoria", "blacklist"):
+        raise HTTPException(status_code=400, detail="side deve ser 'euphoria' ou 'blacklist'")
 
-        # Em modo restrito, membro só pode adicionar suas próprias contas (side euphoria)
-        if restricted_mode:
-            if body.side == "blacklist":
-                raise HTTPException(status_code=403, detail="Apenas staff pode adicionar à blacklist quando a lista está restrita.")
-            if body.main_nick.strip().lower() != my_nick.lower():
-                raise HTTPException(status_code=403, detail="Você só pode adicionar contas vinculadas ao seu próprio nick.")
+    if restricted_mode:
+        if body.side == "blacklist":
+            raise HTTPException(
+                status_code=403,
+                detail="Apenas staff pode adicionar à blacklist quando a lista está restrita.",
+            )
+        if body.main_nick.strip().lower() != my_nick.lower():
+            raise HTTPException(
+                status_code=403,
+                detail="Você só pode adicionar contas vinculadas ao seu próprio nick.",
+            )
 
-        alt_nick = body.alt_nick.strip() if body.alt_nick and body.alt_nick.strip() else None
+    alt_nick = body.alt_nick.strip() if body.alt_nick and body.alt_nick.strip() else None
 
-        payload: dict = {
-            "main_nick": body.main_nick.strip(),
-            "alt_nick": alt_nick,
-            "side": body.side,
-            "notes": body.notes,
-            "created_by": me.get("nick_mudomix"),
-        }
-        # Só envia main_class quando realmente foi informado — evita quebrar o
-        # cadastro "Nossa Guilda" (que não usa esse campo) caso o cache de
-        # schema do Supabase ainda não tenha sido atualizado após o ALTER TABLE.
-        if body.main_class is not None:
-            payload["main_class"] = body.main_class
-
-        resp = await client.post(
-            f"{SUPABASE_URL}/rest/v1/alt_accounts",
-            headers={**supabase_headers(), "Prefer": "return=representation"},
-            json=payload,
+    try:
+        data = store.insert_alt(
+            body.main_nick.strip(),
+            alt_nick,
+            body.side,
+            body.notes,
+            me.get("nick_mudomix"),
+            body.main_class,
         )
-        if resp.status_code >= 400:
-            detail = resp.text
-            if "main_class" in detail and "schema cache" in detail:
-                detail += (
-                    " | Ação: a coluna 'main_class' provavelmente não existe de fato na tabela. "
-                    "Rode no SQL Editor do Supabase: "
-                    "SELECT column_name FROM information_schema.columns WHERE table_name='alt_accounts'; "
-                    "Se 'main_class' não aparecer, rode: "
-                    "ALTER TABLE alt_accounts ADD COLUMN IF NOT EXISTS main_class TEXT; "
-                    "seguido de: NOTIFY pgrst, 'reload schema';"
-                )
-            raise HTTPException(status_code=500, detail=detail)
-        data = resp.json()
-    return data[0] if isinstance(data, list) and data else {"ok": True}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return data if data else {"ok": True}
 
 
 @app.patch("/api/alts/{alt_id}")
 async def update_alt(alt_id: int, body: AltUpdatePayload, user: dict = Depends(require_auth)):
     """Membro edita uma conta/alt existente."""
-    clerk_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        me = await _get_requester_profile(client, clerk_id)
-        _require_member(me)
-        my_nick = me.get("nick_mudomix")
-        is_staff = me.get("role") in ("staff", "admin")
-        visible = await _get_alts_visibility(client)
-        restricted_mode = not is_staff and not visible
+    user_id = user.get("sub")
+    me = _get_requester_profile(user_id)
+    _require_member(me)
+    my_nick = me.get("nick_mudomix")
+    is_staff = me.get("role") in ("staff", "admin")
+    visible = _get_alts_visibility()
+    restricted_mode = not is_staff and not visible
 
-        # Verifica se o alt pertence ao membro em modo restrito
-        if restricted_mode:
-            check = await client.get(
-                f"{SUPABASE_URL}/rest/v1/alt_accounts",
-                headers=supabase_headers(),
-                params={"id": f"eq.{alt_id}", "select": "main_nick,side"},
-            )
-            alt_rows = check.json() if check.status_code == 200 else []
-            if not alt_rows:
-                raise HTTPException(status_code=404, detail="Alt não encontrado")
-            alt = alt_rows[0]
-            if alt.get("side") == "blacklist" or alt.get("main_nick", "").lower() != my_nick.lower():
-                raise HTTPException(status_code=403, detail="Você só pode editar suas próprias contas.")
+    if restricted_mode:
+        alt = store.get_alt_by_id(alt_id)
+        if not alt:
+            raise HTTPException(status_code=404, detail="Alt não encontrado")
+        if alt.get("side") == "blacklist" or alt.get("main_nick", "").lower() != my_nick.lower():
+            raise HTTPException(status_code=403, detail="Você só pode editar suas próprias contas.")
 
-        update_data = {k: v for k, v in body.model_dump().items() if v is not None}
-        if "side" in update_data and update_data["side"] not in ("euphoria", "blacklist"):
-            raise HTTPException(status_code=400, detail="side deve ser 'euphoria' ou 'blacklist'")
-        if not update_data:
-            raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
+    update_data = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "side" in update_data and update_data["side"] not in ("euphoria", "blacklist"):
+        raise HTTPException(status_code=400, detail="side deve ser 'euphoria' ou 'blacklist'")
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-        resp = await client.patch(
-            f"{SUPABASE_URL}/rest/v1/alt_accounts",
-            headers=supabase_headers(),
-            params={"id": f"eq.{alt_id}"},
-            json=update_data,
-        )
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=500, detail=resp.text)
+    try:
+        store.update_alt(alt_id, update_data)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     return {"ok": True}
 
 
 @app.delete("/api/alts/{alt_id}")
 async def delete_alt(alt_id: int, user: dict = Depends(require_auth)):
     """Membro remove uma conta/alt."""
-    clerk_id = user.get("sub")
-    async with httpx.AsyncClient() as client:
-        me = await _get_requester_profile(client, clerk_id)
-        _require_member(me)
-        my_nick = me.get("nick_mudomix")
-        is_staff = me.get("role") in ("staff", "admin")
-        visible = await _get_alts_visibility(client)
-        restricted_mode = not is_staff and not visible
+    user_id = user.get("sub")
+    me = _get_requester_profile(user_id)
+    _require_member(me)
+    my_nick = me.get("nick_mudomix")
+    is_staff = me.get("role") in ("staff", "admin")
+    visible = _get_alts_visibility()
+    restricted_mode = not is_staff and not visible
 
-        # Verifica se o alt pertence ao membro em modo restrito
-        if restricted_mode:
-            check = await client.get(
-                f"{SUPABASE_URL}/rest/v1/alt_accounts",
-                headers=supabase_headers(),
-                params={"id": f"eq.{alt_id}", "select": "main_nick,side"},
-            )
-            alt_rows = check.json() if check.status_code == 200 else []
-            if not alt_rows:
-                raise HTTPException(status_code=404, detail="Alt não encontrado")
-            alt = alt_rows[0]
-            if alt.get("side") == "blacklist" or alt.get("main_nick", "").lower() != my_nick.lower():
-                raise HTTPException(status_code=403, detail="Você só pode remover suas próprias contas.")
+    if restricted_mode:
+        alt = store.get_alt_by_id(alt_id)
+        if not alt:
+            raise HTTPException(status_code=404, detail="Alt não encontrado")
+        if alt.get("side") == "blacklist" or alt.get("main_nick", "").lower() != my_nick.lower():
+            raise HTTPException(status_code=403, detail="Você só pode remover suas próprias contas.")
 
-        resp = await client.delete(
-            f"{SUPABASE_URL}/rest/v1/alt_accounts",
-            headers=supabase_headers(),
-            params={"id": f"eq.{alt_id}"},
-        )
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=500, detail=resp.text)
+    try:
+        store.delete_alt(alt_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     return {"ok": True}
 
 
@@ -1601,33 +1197,216 @@ class StatutePayload(BaseModel):
 @app.get("/api/statute")
 async def get_statute(user: dict = Depends(require_auth)):
     """Retorna o estatuto interno vigente. Visível a qualquer membro aprovado."""
-    async with httpx.AsyncClient() as client:
-        me = await _get_requester_profile(client, user.get("sub"))
-        _require_member(me)
+    me = _get_requester_profile(user.get("sub"))
+    _require_member(me)
 
-        resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/guild_statute",
-            headers=supabase_headers(),
-            params={"select": "content,updated_by,updated_at", "order": "id.desc", "limit": "1"},
-        )
-        rows = resp.json() if resp.status_code == 200 else []
-    if not rows:
+    row = store.get_statute()
+    if not row:
         return {"content": "", "updated_by": None, "updated_at": None}
-    return rows[0]
+    return row
 
 
 @app.put("/api/statute")
 async def update_statute(body: StatutePayload, user: dict = Depends(require_auth)):
     """Atualiza o estatuto interno (staff/admin only)."""
-    async with httpx.AsyncClient() as client:
-        me = await _get_requester_profile(client, user.get("sub"))
-        _require_staff(me)
+    me = _get_requester_profile(user.get("sub"))
+    _require_staff(me)
 
-        resp = await client.post(
-            f"{SUPABASE_URL}/rest/v1/guild_statute",
-            headers={**supabase_headers(), "Prefer": "return=representation"},
-            json={"content": body.content, "updated_by": me.get("nick_mudomix")},
-        )
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=500, detail=resp.text)
+    try:
+        store.insert_statute(body.content, me.get("nick_mudomix"))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     return {"ok": True}
+
+
+# ── Auth própria (Discord OAuth + JWT) — A1 ───────────────────────────────────
+
+def _frontend_allowed(origin: str) -> bool:
+    allowed = {
+        FRONTEND_ORIGIN,
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+    }
+    return origin.rstrip("/") in {a.rstrip("/") for a in allowed}
+
+
+class RefreshPayload(BaseModel):
+    refresh_token: str
+
+
+class LogoutPayload(BaseModel):
+    refresh_token: Optional[str] = None
+
+
+@app.get("/api/auth/provider")
+async def auth_provider_info():
+    return {
+        "provider": AUTH_PROVIDER,
+        "oauth_configured": oauth_discord.oauth_configured(),
+    }
+
+
+@app.get("/api/auth/discord/start")
+async def auth_discord_start(response: Response):
+    if not oauth_discord.oauth_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="OAuth Discord não configurado (DISCORD_CLIENT_ID / SECRET / REDIRECT_URI)",
+        )
+    state = oauth_discord.new_oauth_state()
+    redirect = RedirectResponse(url=oauth_discord.authorize_url(state), status_code=302)
+    redirect.set_cookie(
+        key=OAUTH_STATE_COOKIE,
+        value=state,
+        max_age=600,
+        httponly=True,
+        samesite="lax",
+        secure=COOKIE_SECURE,
+        path="/",
+    )
+    return redirect
+
+
+@app.get("/api/auth/discord/callback")
+async def auth_discord_callback(
+    request: Request,
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+    oauth_state: Optional[str] = Cookie(default=None, alias=OAUTH_STATE_COOKIE),
+):
+    if error:
+        return RedirectResponse(
+            url=f"{FRONTEND_ORIGIN}/entrar?error={quote(error)}",
+            status_code=302,
+        )
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="code/state ausentes")
+    if not oauth_state or oauth_state != state:
+        raise HTTPException(status_code=400, detail="state OAuth inválido (CSRF)")
+
+    try:
+        token_data = await oauth_discord.exchange_code(code)
+        discord_user = await oauth_discord.fetch_discord_user(token_data["access_token"])
+    except Exception as exc:
+        logger.exception("OAuth Discord falhou")
+        return RedirectResponse(
+            url=f"{FRONTEND_ORIGIN}/entrar?error={quote(str(exc)[:120])}",
+            status_code=302,
+        )
+
+    discord_id = str(discord_user.get("id") or "")
+    if not discord_id:
+        raise HTTPException(status_code=400, detail="Discord não retornou id")
+
+    username = discord_user.get("global_name") or discord_user.get("username")
+    avatar = oauth_discord.discord_avatar_url(discord_user)
+
+    try:
+        user_id = store_auth.ensure_user_for_discord(discord_id, username, avatar)
+        refresh_plain = auth_tokens.new_refresh_token()
+        refresh_hash = auth_tokens.hash_refresh_token(refresh_plain)
+        store_auth.create_auth_session(
+            user_id,
+            refresh_hash,
+            auth_tokens.refresh_expiry(),
+            user_agent=request.headers.get("user-agent"),
+            ip_address=request.client.host if request.client else None,
+        )
+        access, expires_in = auth_tokens.issue_access_token(
+            user_id=user_id, discord_id=discord_id
+        )
+    except Exception as exc:
+        logger.exception("Falha ao criar sessão")
+        raise HTTPException(status_code=500, detail=f"Falha ao criar sessão: {exc}") from exc
+
+    if not _frontend_allowed(FRONTEND_ORIGIN):
+        raise HTTPException(status_code=500, detail="FRONTEND_ORIGIN inválido")
+
+    frag = (
+        f"access_token={quote(access)}"
+        f"&refresh_token={quote(refresh_plain)}"
+        f"&expires_in={expires_in}"
+        f"&token_type=bearer"
+    )
+    dest = RedirectResponse(
+        url=f"{FRONTEND_ORIGIN}/auth/callback#{frag}",
+        status_code=302,
+    )
+    dest.delete_cookie(OAUTH_STATE_COOKIE, path="/")
+    return dest
+
+
+@app.post("/api/auth/refresh")
+async def auth_refresh(body: RefreshPayload, request: Request):
+    old_hash = auth_tokens.hash_refresh_token(body.refresh_token)
+    new_plain = auth_tokens.new_refresh_token()
+    new_hash = auth_tokens.hash_refresh_token(new_plain)
+    user_id = store_auth.rotate_refresh(
+        old_hash,
+        new_hash,
+        auth_tokens.refresh_expiry(),
+        user_agent=request.headers.get("user-agent"),
+        ip_address=request.client.host if request.client else None,
+    )
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Refresh token inválido ou expirado")
+
+    # discord_id do profile (opcional no JWT)
+    prof = store.get_profile_by_user_id(user_id)
+    discord_id = (prof or {}).get("discord_id") or ""
+    access, expires_in = auth_tokens.issue_access_token(
+        user_id=user_id, discord_id=str(discord_id)
+    )
+    return {
+        "access_token": access,
+        "refresh_token": new_plain,
+        "expires_in": expires_in,
+        "token_type": "bearer",
+    }
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(
+    body: LogoutPayload,
+    user: dict | None = Depends(get_current_user),
+):
+    if body.refresh_token:
+        store_auth.revoke_session_by_refresh_hash(
+            auth_tokens.hash_refresh_token(body.refresh_token)
+        )
+    if user and user.get("sub"):
+        store_auth.revoke_all_sessions_for_user(str(user["sub"]))
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+async def auth_me(user: dict = Depends(require_auth)):
+    return {
+        "sub": user.get("sub"),
+        "discord_id": user.get("discord_id"),
+        "provider": AUTH_PROVIDER,
+    }
+
+
+# ── BC / IT Checkins ─────────────────────────────────────────────────────────
+
+class CheckinPayload(BaseModel):
+    player: str
+    canal: str
+    evento: str
+
+
+@app.get("/api/checkins")
+async def list_checkins(user: dict = Depends(require_auth)):
+    now = datetime.now(timezone.utc).isoformat()
+    return store.list_checkins_from(now)
+
+
+@app.post("/api/checkins")
+async def create_checkin(body: CheckinPayload, user: dict = Depends(require_auth)):
+    result = store.fazer_checkin(body.player.strip(), body.canal, body.evento)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("message", "Falha no check-in"))
+    return result

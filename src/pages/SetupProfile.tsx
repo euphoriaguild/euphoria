@@ -1,7 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useUser } from '@clerk/clerk-react'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth, getDiscordIdentity } from '../contexts/AuthContext'
 import { api } from '../lib/api'
 
 function formatPhone(value: string): string {
@@ -13,19 +12,18 @@ function formatPhone(value: string): string {
 }
 
 export function SetupProfile() {
-  const { user } = useUser()
-  const { profile, refreshProfile } = useAuth()
+  const { user, isLoaded, isSignedIn, profile, refreshProfile } = useAuth()
   const navigate = useNavigate()
   const [nick, setNick] = useState(profile?.nick_mudomix ?? '')
   const [phone, setPhone] = useState(profile?.phone ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  // Extrai info do Discord via Clerk
-  const discordAccount = user?.externalAccounts?.find(a => a.provider === 'discord')
-  const discordUsername = discordAccount?.username ?? user?.username ?? null
-  const discordId = discordAccount?.providerUserId ?? null
-  const avatarUrl = user?.imageUrl ?? null
+  const { discordUsername, discordId, avatarUrl } = getDiscordIdentity(user, profile)
+
+  useEffect(() => {
+    if (isLoaded && !isSignedIn) navigate('/entrar', { replace: true })
+  }, [isLoaded, isSignedIn, navigate])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -42,7 +40,7 @@ export function SetupProfile() {
     try {
       await api.saveProfile({
         nick_mudomix: nick.trim(),
-        guild: 'Euphoria', // Guilda fixa
+        guild: 'Euphoria',
         phone: phone.trim(),
         discord_username: discordUsername ?? undefined,
         discord_id: discordId ?? undefined,
@@ -51,7 +49,7 @@ export function SetupProfile() {
       await refreshProfile()
       navigate('/pendente')
     } catch {
-      setError('Erro ao salvar. Verifique se o backend está rodando.')
+      setError(e instanceof Error ? e.message : 'Erro ao salvar. Verifique se o backend está em http://localhost:8000.')
     } finally {
       setSaving(false)
     }
@@ -76,7 +74,6 @@ export function SetupProfile() {
         </div>
 
         <div className="card">
-          {/* Discord info via Clerk */}
           {discordUsername && (
             <div style={{
               display: 'flex', alignItems: 'center', gap: 12,
@@ -88,7 +85,7 @@ export function SetupProfile() {
               )}
               <div>
                 <div style={{ fontSize: 13, fontWeight: 600 }}>{discordUsername}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Discord conectado via Clerk</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Discord conectado</div>
               </div>
               <span className="badge badge-online" style={{ marginLeft: 'auto' }}>✓</span>
             </div>

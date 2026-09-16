@@ -5,8 +5,7 @@ import {
   Dice5, Globe, Coins, ClipboardList, LogOut, UserSearch,
   ShieldAlert, ClipboardCheck, ScrollText,
 } from 'lucide-react'
-import { useClerk, useUser } from '@clerk/clerk-react'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth, getDiscordIdentity } from '../contexts/AuthContext'
 import { api } from '../lib/api'
 
 const ROLE_LABELS: Record<string, string> = {
@@ -17,13 +16,12 @@ const ROLE_LABELS: Record<string, string> = {
 }
 
 export function Sidebar() {
-  const { profile, isStaff } = useAuth()
-  const { user } = useUser()
-  const { signOut } = useClerk()
+  const { profile, isStaff, user, signOut } = useAuth()
   const [altsVisible, setAltsVisible] = useState(false)
+  const { discordUsername, avatarUrl: discordAvatar } = getDiscordIdentity(user, profile)
 
   useEffect(() => {
-    if (isStaff) return // staff sempre vê, não precisa checar
+    if (isStaff) return
     api.getAltsVisibility()
       .then(d => setAltsVisible(d.visible_to_members))
       .catch(() => {})
@@ -31,14 +29,11 @@ export function Sidebar() {
 
   const canSeeAlts = isStaff || altsVisible
 
-  // Discord username via Clerk
-  const discordAccount = user?.externalAccounts?.find(a => a.provider === 'discord')
   const displayName = profile?.nick_mudomix
-    ?? discordAccount?.username
-    ?? user?.username
-    ?? user?.firstName
+    ?? discordUsername
     ?? 'Usuário'
-  const avatarUrl = profile?.avatar_url ?? user?.imageUrl
+  const avatarUrl = profile?.avatar_url ?? discordAvatar
+  const showUser = !!user
 
   return (
     <aside className="sidebar">
@@ -126,7 +121,7 @@ export function Sidebar() {
       </nav>
 
       {/* User info + logout */}
-      {user && (
+      {showUser && (
         <div style={{
           padding: '12px 14px', borderTop: '1px solid var(--border)',
           display: 'flex', alignItems: 'center', gap: 10,

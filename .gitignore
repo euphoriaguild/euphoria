@@ -6,3 +6,4 @@ dist
 backend/.env
 .DS_Store
 *.log
+docs/

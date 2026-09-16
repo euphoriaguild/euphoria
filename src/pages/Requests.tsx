@@ -29,16 +29,16 @@ export function Requests() {
     return () => clearInterval(id)
   }, [])
 
-  async function approve(clerkId: string, role = 'member') {
-    setActing(clerkId)
-    await api.approveProfile(clerkId, role)
+  async function approve(userId: string, role = 'member') {
+    setActing(userId)
+    await api.approveProfile(userId, role)
     await load()
     setActing(null)
   }
 
-  async function reject(clerkId: string) {
-    setActing(clerkId)
-    await api.approveProfile(clerkId, 'rejected')
+  async function reject(userId: string) {
+    setActing(userId)
+    await api.approveProfile(userId, 'rejected')
     await load()
     setActing(null)
   }
@@ -76,7 +76,7 @@ export function Requests() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {pending.map(m => (
-              <div key={m.clerk_id} className="card" style={{
+              <div key={m.user_id} className="card" style={{
                 display: 'flex', alignItems: 'center', gap: 16, padding: '14px 18px',
               }}>
                 {/* Avatar */}
@@ -113,8 +113,8 @@ export function Requests() {
                 <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
                   <button
                     className="btn"
-                    onClick={() => approve(m.clerk_id, 'admin')}
-                    disabled={acting === m.clerk_id}
+                    onClick={() => approve(m.user_id, 'admin')}
+                    disabled={acting === m.user_id}
                     style={{
                       background: 'rgba(201,168,76,0.15)', color: 'var(--accent)',
                       border: '1px solid rgba(201,168,76,0.3)', padding: '6px 12px', fontSize: 12,
@@ -126,8 +126,8 @@ export function Requests() {
                   </button>
                   <button
                     className="btn"
-                    onClick={() => approve(m.clerk_id, 'staff')}
-                    disabled={acting === m.clerk_id}
+                    onClick={() => approve(m.user_id, 'staff')}
+                    disabled={acting === m.user_id}
                     style={{
                       background: 'rgba(159,122,234,0.15)', color: 'var(--purple)',
                       border: '1px solid rgba(159,122,234,0.3)', padding: '6px 12px', fontSize: 12,
@@ -138,8 +138,8 @@ export function Requests() {
                   </button>
                   <button
                     className="btn"
-                    onClick={() => approve(m.clerk_id, 'member')}
-                    disabled={acting === m.clerk_id}
+                    onClick={() => approve(m.user_id, 'member')}
+                    disabled={acting === m.user_id}
                     style={{
                       background: 'rgba(72,187,120,0.15)', color: 'var(--green)',
                       border: '1px solid rgba(72,187,120,0.3)', padding: '6px 12px', fontSize: 12,
@@ -151,8 +151,8 @@ export function Requests() {
                   </button>
                   <button
                     className="btn btn-danger"
-                    onClick={() => reject(m.clerk_id)}
-                    disabled={acting === m.clerk_id}
+                    onClick={() => reject(m.user_id)}
+                    disabled={acting === m.user_id}
                     style={{ padding: '6px 12px', fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}
                     title="Rejeitar"
                   >

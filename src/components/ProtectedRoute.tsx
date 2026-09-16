@@ -1,5 +1,4 @@
 import { Navigate } from 'react-router-dom'
-import { useAuth as useClerkAuth, useClerk } from '@clerk/clerk-react'
 import { useAuth } from '../contexts/AuthContext'
 
 interface Props {
@@ -8,11 +7,9 @@ interface Props {
 }
 
 export function ProtectedRoute({ children, requireStaff = false }: Props) {
-  const { isSignedIn, isLoaded: clerkLoaded } = useClerkAuth()
-  const { profile, loadingProfile, isApproved, isStaff } = useAuth()
-  const { signOut } = useClerk()
+  const { isSignedIn, isLoaded, profile, loadingProfile, isApproved, isStaff, signOut } = useAuth()
 
-  if (!clerkLoaded || loadingProfile) {
+  if (!isLoaded || loadingProfile) {
     return (
       <div style={{
         height: '100vh', display: 'flex', alignItems: 'center',
@@ -26,13 +23,10 @@ export function ProtectedRoute({ children, requireStaff = false }: Props) {
     )
   }
 
-  // Não logado no Clerk
   if (!isSignedIn) return <Navigate to="/entrar" replace />
 
-  // Logado mas sem perfil no banco ou sem nick preenchido → preencher cadastro
   if (!profile || !profile.nick_mudomix) return <Navigate to="/configurar" replace />
 
-  // Rejeitado pela staff
   if (profile?.role === 'rejected') {
     return (
       <div style={{

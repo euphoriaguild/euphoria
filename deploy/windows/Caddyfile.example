@@ -1,0 +1,8 @@
+# Caddyfile exemplo — reverse proxy HTTPS → uvicorn :8000
+# Instale Caddy na VPS: https://caddyserver.com/docs/install
+# Ajuste o dominio e rode: caddy run --config Caddyfile
+
+api.SEU_DOMINIO.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:8000
+}

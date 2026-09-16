@@ -1,103 +1,65 @@
 """
-Clerk JWT verification via JWKS.
-Clerk emite JWTs RS256 — verificamos usando as chaves públicas do endpoint JWKS.
+JWT verification — Auth própria (Discord OAuth + JWT HS256).
+
+Cutover A2–A4: Supabase Auth removido do caminho de autenticação.
 """
+from __future__ import annotations
+
 from fastapi import HTTPException, Security, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import jwt
-import httpx
 import os
-import time
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Clerk publishable key format: pk_test_xxxx ou pk_live_xxxx
-# JWKS URL: https://<frontend-api>.clerk.accounts.dev/.well-known/jwks.json
-# Ou defina CLERK_JWKS_URL diretamente no .env
-CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL", "")
+# Mantido por compatibilidade de imports; sempre "self" após A4.
+AUTH_PROVIDER = os.getenv("AUTH_PROVIDER", "self").strip().lower() or "self"
+AUTH_DEV_MODE = os.getenv("AUTH_DEV_MODE", "").lower() in ("1", "true", "yes")
 
 security = HTTPBearer(auto_error=False)
 
-# Cache simples das chaves JWKS para não buscar a cada requisição
-_jwks_cache: dict = {"keys": [], "fetched_at": 0}
-_JWKS_TTL = 3600  # 1 hora
 
+def _decode_self(token: str) -> dict:
+    from auth_tokens import decode_access_token
 
-async def _get_jwks() -> list:
-    """Busca e faz cache das chaves públicas do Clerk."""
-    now = time.time()
-    if _jwks_cache["keys"] and now - _jwks_cache["fetched_at"] < _JWKS_TTL:
-        return _jwks_cache["keys"]
-
-    if not CLERK_JWKS_URL:
-        # Modo desenvolvimento: aceita sem verificar assinatura
-        return []
-
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(CLERK_JWKS_URL, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-
-    _jwks_cache["keys"] = data.get("keys", [])
-    _jwks_cache["fetched_at"] = now
-    return _jwks_cache["keys"]
+    payload = decode_access_token(token)
+    if payload.get("typ") != "access":
+        raise HTTPException(status_code=401, detail="Tipo de token inválido")
+    if not payload.get("sub"):
+        raise HTTPException(status_code=401, detail="Token sem subject (sub)")
+    return payload
 
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Security(security),
 ) -> dict | None:
-    """
-    Verifica o JWT do Clerk no header Authorization: Bearer <token>.
-    Retorna o payload decodificado ou None.
-    """
     if not credentials:
         return None
 
     token = credentials.credentials
 
-    # Sem CLERK_JWKS_URL configurado (dev), aceita qualquer token
-    if not CLERK_JWKS_URL:
+    if AUTH_DEV_MODE:
         try:
-            payload = jwt.decode(token, options={"verify_signature": False})
-            return payload
+            return jwt.decode(token, options={"verify_signature": False})
         except Exception:
-            return {"sub": "dev", "role": "authenticated"}
+            return {"sub": "00000000-0000-0000-0000-000000000000"}
 
     try:
-        # Decodifica header para pegar kid
-        header = jwt.get_unverified_header(token)
-        kid = header.get("kid")
-
-        keys = await _get_jwks()
-        key_data = next((k for k in keys if k.get("kid") == kid), None)
-
-        if not key_data:
-            # Tenta recarregar JWKS (chave pode ser nova)
-            _jwks_cache["fetched_at"] = 0
-            keys = await _get_jwks()
-            key_data = next((k for k in keys if k.get("kid") == kid), None)
-
-        if not key_data:
-            raise HTTPException(status_code=401, detail="Chave JWT não encontrada")
-
-        public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
-        payload = jwt.decode(
-            token,
-            public_key,
-            algorithms=["RS256"],
-            options={"verify_aud": False},
-        )
-        return payload
-
+        return _decode_self(token)
+    except HTTPException:
+        raise
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expirado")
     except jwt.InvalidTokenError as e:
         raise HTTPException(status_code=401, detail=f"Token inválido: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Token inválido: {e}") from e
 
 
 def require_auth(user: dict | None = Depends(get_current_user)) -> dict:
-    """Exige autenticação. Levanta 401 se não autenticado."""
     if user is None:
         raise HTTPException(status_code=401, detail="Autenticação necessária")
+    if not user.get("sub"):
+        raise HTTPException(status_code=401, detail="Token sem subject (sub)")
     return user

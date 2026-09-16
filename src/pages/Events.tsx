@@ -10,7 +10,7 @@ import type { ModoKey } from '../config'
 
 export function Events() {
   const agora = useHorarioBrasilia()
-  const { checkins } = useCheckins()
+  const { checkins, recarregar } = useCheckins()
   const [modo, setModo] = useState<ModoKey>('bc')
 
   return (
@@ -27,7 +27,7 @@ export function Events() {
         <ModoTabs modo={modo} onChange={setModo} />
 
         <div className="card" style={{ marginTop: 12 }}>
-          <CheckinForm agora={agora} modo={modo} />
+          <CheckinForm agora={agora} modo={modo} onSuccess={recarregar} />
         </div>
 
         <h2 style={{ margin: '24px 0 12px', fontSize: 14, fontWeight: 700,

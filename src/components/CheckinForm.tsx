@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '../supabase'
 import { MODOS, LABELS, type CanalKey, type ModoKey } from '../config'
 import { eventoAtual } from '../lib/eventos'
+import { api } from '../lib/api'
 
 type Props = {
   agora: Date | null
   modo: ModoKey
+  onSuccess?: () => void
 }
 
-export function CheckinForm({ agora, modo }: Props) {
+export function CheckinForm({ agora, modo, onSuccess }: Props) {
   const canais = MODOS[modo].canais
   const [nome, setNome] = useState('')
   const [canal, setCanal] = useState<CanalKey>(canais[0])
@@ -23,13 +24,21 @@ export function CheckinForm({ agora, modo }: Props) {
     const evento = eventoAtual(agora, MODOS[modo].horarios)
     if (!evento) { alert('Check-in disponível apenas 25 minutos antes do evento.'); return }
     setEnviando(true)
-    const { data, error } = await supabase.rpc('fazer_checkin', {
-      p_player: nome.trim(), p_canal: canal, p_evento: evento.toISOString(),
-    })
-    setEnviando(false)
-    if (error) { alert('Erro ao registrar'); return }
-    alert(data?.message ?? 'Check-in realizado!')
-    setNome('')
+    try {
+      const data = await api.createCheckin({
+        player: nome.trim(),
+        canal,
+        evento: evento.toISOString(),
+      })
+      alert(data?.message ?? 'Check-in realizado!')
+      setNome('')
+      onSuccess?.()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erro ao registrar'
+      alert(msg.replace(/^API error \d+: \/api\/checkins — /, '') || 'Erro ao registrar')
+    } finally {
+      setEnviando(false)
+    }
   }
 
   return (

@@ -1,12 +1,12 @@
 // Centraliza as chamadas ao backend Python
-// O token Clerk é injetado via setClerkTokenGetter() no AuthProvider
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+// Access token (JWT próprio) injetado via setAuthTokenGetter() no AuthProvider
+const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
 
 // Token getter injetado pelo AuthProvider ao inicializar
-let _getClerkToken: (() => Promise<string | null>) | null = null
+let _getAuthToken: (() => Promise<string | null>) | null = null
 
-export function setClerkTokenGetter(fn: () => Promise<string | null>) {
-  _getClerkToken = fn
+export function setAuthTokenGetter(fn: () => Promise<string | null>) {
+  _getAuthToken = fn
 }
 
 export interface GuildMember {
@@ -69,8 +69,8 @@ export interface CharacterProfile {
   blocked_until?: string
 }
 
-async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = _getClerkToken ? await _getClerkToken() : null
+async function apiFetch<T>(path: string, options: RequestInit = {}, retried = false): Promise<T> {
+  const token = _getAuthToken ? await _getAuthToken() : null
 
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
@@ -80,6 +80,13 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
       ...options.headers,
     },
   })
+
+  if (res.status === 401 && !retried && !path.startsWith('/api/auth/')) {
+    const { refreshAccessToken } = await import('../contexts/AuthContext')
+    const next = await refreshAccessToken()
+    if (next) return apiFetch<T>(path, options, true)
+  }
+
   if (!res.ok) {
     let detail = ''
     try {
@@ -124,13 +131,13 @@ export const api = {
   saveWorldBossParties: (parties: WorldBossParty[]) =>
     apiFetch('/api/worldboss/parties', { method: 'PUT', body: JSON.stringify({ parties }) }),
 
-  // Perfil / aprovação — passam pelo backend com Clerk JWT
+  // Perfil / aprovação — passam pelo backend com JWT Supabase
   getMyProfile: () => apiFetch<ProfileData>('/api/profile/me'),
   saveProfile: (data: { nick_mudomix: string; guild: string; phone: string; discord_username?: string; discord_id?: string; avatar_url?: string }) =>
     apiFetch('/api/profile', { method: 'POST', body: JSON.stringify(data) }),
   getPendingMembers: () => apiFetch<PendingMember[]>('/api/profile/pending'),
-  approveProfile: (clerk_id: string, role: string) =>
-    apiFetch('/api/profile/approve', { method: 'POST', body: JSON.stringify({ clerk_id, role }) }),
+  approveProfile: (user_id: string, role: string) =>
+    apiFetch('/api/profile/approve', { method: 'POST', body: JSON.stringify({ user_id, role }) }),
 
   // Admin — gerenciar membros
   getAllMembersAdmin: () => apiFetch<AdminMember[]>('/api/members/all/admin'),
@@ -180,6 +187,23 @@ export const api = {
     apiFetch(`/api/alts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteAlt: (id: number) =>
     apiFetch(`/api/alts/${id}`, { method: 'DELETE' }),
+
+  // Check-ins BC / Ilusion (SQL Server via FastAPI)
+  getCheckins: () =>
+    apiFetch<BcCheckin[]>('/api/checkins'),
+  createCheckin: (data: { player: string; canal: string; evento: string }) =>
+    apiFetch<{ ok: boolean; message: string }>('/api/checkins', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+}
+
+export interface BcCheckin {
+  id: number
+  player: string
+  canal: string
+  evento?: string
+  created_at: string
 }
 
 export interface AltsVisibility {
@@ -273,7 +297,7 @@ export interface WorldBossPartiesData {
 }
 
 export interface ProfileData {
-  clerk_id: string
+  user_id: string
   discord_username: string | null
   discord_id: string | null
   avatar_url: string | null
@@ -322,7 +346,7 @@ export interface StatuteData {
 }
 
 export interface PendingMember {
-  clerk_id: string
+  user_id: string
   discord_username: string | null
   avatar_url: string | null
   nick_mudomix: string | null

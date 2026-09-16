@@ -3,12 +3,11 @@ import { AuthProvider } from './contexts/AuthContext'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import { Sidebar } from './components/Sidebar'
 
-// Páginas públicas (não exigem login)
 import { Landing }      from './pages/Landing'
+import { AuthCallback } from './pages/AuthCallback'
 import { SetupProfile } from './pages/SetupProfile'
 import { Pending }      from './pages/Pending'
 
-// Páginas protegidas (exigem Clerk login + aprovação da staff)
 import { Dashboard }  from './pages/Dashboard'
 import { Members }    from './pages/Members'
 import { Rankings }   from './pages/Rankings'
@@ -38,16 +37,14 @@ function Protected({ children, staff = false }: { children: React.ReactNode; sta
 
 export default function App() {
   return (
-    // AuthProvider usa Clerk's useUser internamente para buscar o perfil do Supabase
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          {/* Rotas públicas */}
-          <Route path="/entrar"     element={<Landing />} />
-          <Route path="/configurar" element={<SetupProfile />} />
-          <Route path="/pendente"   element={<Pending />} />
+          <Route path="/entrar"        element={<Landing />} />
+          <Route path="/auth/callback" element={<AuthCallback />} />
+          <Route path="/configurar"    element={<SetupProfile />} />
+          <Route path="/pendente"      element={<Pending />} />
 
-          {/* Rotas protegidas */}
           <Route path="/"                element={<Protected><Dashboard /></Protected>} />
           <Route path="/membros"         element={<Protected><Members /></Protected>} />
           <Route path="/rankings"        element={<Protected><Rankings /></Protected>} />
@@ -63,10 +60,8 @@ export default function App() {
           <Route path="/perfil"          element={<Protected><Profile /></Protected>} />
           <Route path="/perfil/:name"    element={<Protected><Profile /></Protected>} />
 
-          {/* Staff only */}
           <Route path="/solicitacoes" element={<Protected staff><Requests /></Protected>} />
 
-          {/* Qualquer outra rota → dashboard (com proteção) */}
           <Route path="*" element={<Protected><Dashboard /></Protected>} />
         </Routes>
       </BrowserRouter>

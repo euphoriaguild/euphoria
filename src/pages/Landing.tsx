@@ -1,12 +1,11 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { SignInButton, useAuth as useClerkAuth } from '@clerk/clerk-react'
 import { useAuth } from '../contexts/AuthContext'
 
 const FEATURES = [
   { section: 'COMUNIDADE', items: [
     { icon: '👥', title: 'Membros', desc: 'Diretório completo com stats em tempo real.' },
-    { icon: '🛡️', title: 'Guildas', desc: 'Euphoria, Euphor1a, Jackson5 e HellBoyz unidas.' },
+    { icon: '🛡️', title: 'Guildas', desc: 'Euphoria e alianças unidas.' },
   ]},
   { section: 'COMPETIÇÃO', items: [
     { icon: '🏆', title: 'Rankings', desc: 'Resets em tempo real com destaque da Euphoria.' },
@@ -24,9 +23,10 @@ const FEATURES = [
 ]
 
 export function Landing() {
-  const { isSignedIn, isLoaded } = useClerkAuth()
-  const { isApproved, profile, loadingProfile } = useAuth()
+  const { isSignedIn, isLoaded, isApproved, profile, loadingProfile, signInWithDiscord } = useAuth()
   const navigate = useNavigate()
+  const [signingIn, setSigningIn] = useState(false)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     if (!isLoaded || loadingProfile) return
@@ -35,11 +35,21 @@ export function Landing() {
       else if (isApproved) navigate('/')
       else navigate('/pendente')
     }
-  }, [isSignedIn, isLoaded, isApproved, profile, loadingProfile])
+  }, [isSignedIn, isLoaded, isApproved, profile, loadingProfile, navigate])
+
+  async function handleDiscordLogin() {
+    setSigningIn(true)
+    setError('')
+    try {
+      await signInWithDiscord()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Falha ao iniciar login Discord')
+      setSigningIn(false)
+    }
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-900)' }}>
-      {/* Header */}
       <header style={{
         padding: '0 40px', height: 60, display: 'flex',
         alignItems: 'center', justifyContent: 'space-between',
@@ -50,15 +60,12 @@ export function Landing() {
           color: 'var(--accent)', letterSpacing: 3, textTransform: 'uppercase' }}>
           Euphoria
         </div>
-        <SignInButton mode="modal">
-          <button className="btn btn-primary" style={{ gap: 8 }}>
-            <DiscordIcon />
-            Entrar com Discord
-          </button>
-        </SignInButton>
+        <button className="btn btn-primary" style={{ gap: 8 }} onClick={handleDiscordLogin} disabled={signingIn}>
+          <DiscordIcon />
+          {signingIn ? 'Abrindo Discord...' : 'Entrar com Discord'}
+        </button>
       </header>
 
-      {/* Hero */}
       <section style={{
         minHeight: 'calc(100vh - 61px)', display: 'flex',
         flexDirection: 'column', alignItems: 'center',
@@ -89,20 +96,26 @@ export function Landing() {
         </p>
 
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
-          <SignInButton mode="modal">
-            <button className="btn btn-primary" style={{ padding: '12px 28px', fontSize: 15, gap: 10 }}>
-              <DiscordIcon />
-              Entrar com Discord
-            </button>
-          </SignInButton>
+          <button
+            className="btn btn-primary"
+            style={{ padding: '12px 28px', fontSize: 15, gap: 10 }}
+            onClick={handleDiscordLogin}
+            disabled={signingIn}
+          >
+            <DiscordIcon />
+            {signingIn ? 'Abrindo Discord...' : 'Entrar com Discord'}
+          </button>
           <a href="#features" className="btn btn-ghost" style={{ padding: '12px 28px', fontSize: 15 }}>
             Ver recursos
           </a>
         </div>
 
-        {/* Badge de guildas */}
+        {error && (
+          <p style={{ color: 'var(--red)', marginTop: 16, fontSize: 13 }}>{error}</p>
+        )}
+
         <div style={{ display: 'flex', gap: 12, marginTop: 48, flexWrap: 'wrap', justifyContent: 'center' }}>
-          {['Euphoria', 'Euphor1a', 'Jackson5', 'HellBoyz'].map(g => (
+          {['Euphoria'].map(g => (
             <span key={g} style={{
               padding: '4px 14px', borderRadius: 20,
               border: '1px solid var(--border-accent)',
@@ -113,10 +126,7 @@ export function Landing() {
         </div>
       </section>
 
-      {/* Features */}
-      <section id="features" style={{
-        maxWidth: 900, margin: '0 auto', padding: '60px 24px',
-      }}>
+      <section id="features" style={{ maxWidth: 900, margin: '0 auto', padding: '60px 24px' }}>
         <h2 style={{
           fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700,
           textAlign: 'center', marginBottom: 8, color: 'var(--text-primary)',
@@ -148,10 +158,7 @@ export function Landing() {
         ))}
       </section>
 
-      {/* CTA final */}
-      <section style={{
-        maxWidth: 700, margin: '0 auto 80px', padding: '0 24px', textAlign: 'center',
-      }}>
+      <section style={{ maxWidth: 700, margin: '0 auto 80px', padding: '0 24px', textAlign: 'center' }}>
         <div className="card" style={{
           padding: '40px', borderColor: 'var(--border-accent)',
           background: 'rgba(201,168,76,0.04)',
@@ -162,12 +169,15 @@ export function Landing() {
           <p style={{ color: 'var(--text-secondary)', marginBottom: 24, fontSize: 14 }}>
             Entre com seu Discord, complete o perfil e aguarde aprovação da staff.
           </p>
-          <SignInButton mode="modal">
-            <button className="btn btn-primary" style={{ padding: '12px 32px', fontSize: 15, gap: 10 }}>
-              <DiscordIcon />
-              Cadastrar com Discord
-            </button>
-          </SignInButton>
+          <button
+            className="btn btn-primary"
+            style={{ padding: '12px 32px', fontSize: 15, gap: 10 }}
+            onClick={handleDiscordLogin}
+            disabled={signingIn}
+          >
+            <DiscordIcon />
+            Cadastrar com Discord
+          </button>
         </div>
       </section>
     </div>

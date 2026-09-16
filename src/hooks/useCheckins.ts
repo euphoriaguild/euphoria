@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { supabase } from '../supabase'
+import { api } from '../lib/api'
 import type { CanalKey } from '../config'
 
 export type Checkin = {
@@ -7,43 +7,26 @@ export type Checkin = {
   player: string
   canal: CanalKey
   created_at: string
+  evento?: string
 }
 
 export function useCheckins() {
   const [checkins, setCheckins] = useState<Checkin[]>([])
 
   const carregar = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('checkins')
-      .select('*')
-      .gte('evento', new Date().toISOString())   // só eventos ainda não ocorridos
-      .order('created_at', { ascending: true })
-    if (error) {
-      console.error('Erro ao carregar checkins:', error)
-      return
+    try {
+      const data = await api.getCheckins()
+      setCheckins(data as Checkin[])
+    } catch (err) {
+      console.error('Erro ao carregar checkins:', err)
     }
-    if (data) setCheckins(data as Checkin[])
   }, [])
 
   useEffect(() => {
     carregar()
-
-    // recarrega a cada minuto para limpar grupos cujo evento já passou
+    // Polling (substitui Realtime do Supabase)
     const tickId = setInterval(carregar, 60_000)
-
-    const channel = supabase
-      .channel('checkins-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'checkins' },
-        () => carregar()
-      )
-      .subscribe()
-
-    return () => {
-      clearInterval(tickId)
-      supabase.removeChannel(channel)
-    }
+    return () => clearInterval(tickId)
   }, [carregar])
 
   return { checkins, recarregar: carregar }
