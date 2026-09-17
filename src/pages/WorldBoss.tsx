@@ -12,13 +12,13 @@ const CLASS_COLORS: Record<string, string> = {
 }
 
 const SCHEDULE = [
-  { day: 'Segunda',  boss: 'Phoenix',   emoji: '🔥', weekday: 0 },
-  { day: 'Terça',    boss: 'Hell Maine', emoji: '🔮', weekday: 1 },
-  { day: 'Quarta',   boss: 'Phoenix',   emoji: '🔥', weekday: 2 },
-  { day: 'Quinta',   boss: 'Kayn',      emoji: '⚔️', weekday: 3 },
-  { day: 'Sexta',    boss: null,        emoji: '😴', weekday: 4 },
-  { day: 'Sábado',  boss: 'Hydra',     emoji: '🐍', weekday: 5 },
-  { day: 'Domingo',  boss: 'Zaikan',    emoji: '💀', weekday: 6 },
+  { day: 'Segunda',  boss: 'Phoenix',    emoji: '🔥', weekday: 0, map: 'LOST TOWER 1 (covil)', mapImage: '/world-boss/phoenix-losttower.png' },
+  { day: 'Terça',    boss: 'Hell Maine', emoji: '🔮', weekday: 1, map: 'AIDA',                mapImage: '/world-boss/hellmaine-aida.png' },
+  { day: 'Quarta',   boss: 'Phoenix',    emoji: '🔥', weekday: 2, map: 'LOST TOWER 1 (covil)', mapImage: '/world-boss/phoenix-losttower.png' },
+  { day: 'Quinta',   boss: 'Kayn',       emoji: '⚔️', weekday: 3, map: 'LOST TOWER 1',         mapImage: '/world-boss/kayn-losttower.png' },
+  { day: 'Sexta',    boss: null,         emoji: '😴', weekday: 4, map: null,                  mapImage: null },
+  { day: 'Sábado',  boss: 'Hydra',      emoji: '🐍', weekday: 5, map: 'ATLANS',              mapImage: '/world-boss/hydra-atlans.png' },
+  { day: 'Domingo',  boss: 'Zaikan',     emoji: '💀', weekday: 6, map: 'TARKAN',              mapImage: '/world-boss/zaikan-tarkan.png' },
 ]
 
 function useNow() {
@@ -53,10 +53,23 @@ export function WorldBoss() {
   const [saving, setSaving] = useState(false)
   const [draggedNick, setDraggedNick] = useState<string | null>(null)
   const [dragOverParty, setDragOverParty] = useState<string | null>(null)
+  const [mapModal, setMapModal] = useState<{ title: string; src: string } | null>(null)
 
   const myNick = profile?.nick_mudomix
   const myCheckedIn = checkins.some(c => c.nick_mudomix === myNick)
+  const todaySchedule = todayInfo
+    ? SCHEDULE.find(s => s.weekday === todayInfo.weekday)
+    : undefined
+  const todayMap = todaySchedule?.map ?? null
+  const todayMapImage = todaySchedule?.mapImage ?? null
 
+  function openMapModal(boss: string | null, map: string | null, mapImage: string | null) {
+    if (!mapImage || !map) return
+    setMapModal({
+      title: boss ? `${boss} — ${map}` : map,
+      src: mapImage,
+    })
+  }
   const load = useCallback(async () => {
     setLoading(true)
     try {
@@ -87,6 +100,13 @@ export function WorldBoss() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    if (!mapModal) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMapModal(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [mapModal])
 
   async function handleCheckin() {
     setCheckingIn(true)
@@ -188,9 +208,26 @@ export function WorldBoss() {
                       Boss de hoje — 20:30
                     </div>
                     <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 900,
-                      color: 'var(--accent)', marginBottom: 8 }}>
+                      color: 'var(--accent)', marginBottom: todayMap ? 4 : 8 }}>
                       {todayInfo.boss_name}
                     </div>
+                    {todayMap && (
+                      <button
+                        type="button"
+                        onClick={() => openMapModal(todayInfo.boss_name, todayMap, todayMapImage)}
+                        style={{
+                          display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8,
+                          background: 'none', border: 'none', padding: 0,
+                          cursor: todayMapImage ? 'pointer' : 'default',
+                          textDecoration: 'none', textAlign: 'left',
+                          transition: 'color 0.15s',
+                        }}
+                        onMouseEnter={e => { if (todayMapImage) e.currentTarget.style.color = 'var(--accent)' }}
+                        onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-secondary)' }}
+                      >
+                        Mapa: {todayMap}
+                      </button>
+                    )}
 
                     {/* Countdown */}
                     {!isOver ? (
@@ -276,6 +313,22 @@ export function WorldBoss() {
                         marginTop: 2, fontWeight: s.boss ? 600 : 400 }}>
                         {s.boss ?? 'Off'}
                       </div>
+                      {s.map && (
+                        <button
+                          type="button"
+                          onClick={() => openMapModal(s.boss, s.map, s.mapImage)}
+                          style={{
+                            display: 'block', width: '100%', fontSize: 10, color: 'var(--text-muted)',
+                            marginTop: 3, lineHeight: 1.3, background: 'none', border: 'none',
+                            padding: 0, cursor: s.mapImage ? 'pointer' : 'default',
+                            textDecoration: 'none', transition: 'color 0.15s',
+                          }}
+                          onMouseEnter={e => { if (s.mapImage) e.currentTarget.style.color = 'var(--accent)' }}
+                          onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)' }}
+                        >
+                          {s.map}
+                        </button>
+                      )}
                     </div>
                   )
                 })}
@@ -493,6 +546,48 @@ export function WorldBoss() {
           </>
         )}
       </div>
+
+      {mapModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setMapModal(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 200,
+            background: 'rgba(0,0,0,0.78)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 24,
+          }}
+        >
+          <div
+            className="card"
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: '100%', maxWidth: 920, maxHeight: '90vh',
+              padding: 16, display: 'flex', flexDirection: 'column', gap: 12,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>{mapModal.title}</div>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setMapModal(null)}
+                style={{ padding: '4px 10px', fontSize: 12 }}
+              >
+                Fechar
+              </button>
+            </div>
+            <div style={{ overflow: 'auto', textAlign: 'center' }}>
+              <img
+                src={mapModal.src}
+                alt={mapModal.title}
+                style={{ maxWidth: '100%', maxHeight: '75vh', borderRadius: 6, border: '1px solid var(--border)' }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }
