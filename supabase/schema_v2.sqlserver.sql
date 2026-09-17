@@ -67,7 +67,8 @@ BEGIN
     phone             NVARCHAR(30) NULL,
     equip_set         NVARCHAR(200) NULL,
     equip_weapon      NVARCHAR(200) NULL,
-    equip_accessory   NVARCHAR(200) NULL
+    equip_accessory   NVARCHAR(200) NULL,
+    onboarding_completed_at DATETIMEOFFSET NULL
   );
 END
 GO

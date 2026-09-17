@@ -138,6 +138,12 @@ export const api = {
   getPendingMembers: () => apiFetch<PendingMember[]>('/api/profile/pending'),
   approveProfile: (user_id: string, role: string) =>
     apiFetch('/api/profile/approve', { method: 'POST', body: JSON.stringify({ user_id, role }) }),
+  completeOnboarding: () =>
+    apiFetch('/api/onboarding/complete', {
+      method: 'POST',
+      body: JSON.stringify({ statute_accepted: true }),
+    }),
+  getGuildLinks: () => apiFetch<GuildLinks>('/api/guild/links'),
 
   // Admin — gerenciar membros
   getAllMembersAdmin: () => apiFetch<AdminMember[]>('/api/members/all/admin'),
@@ -306,9 +312,15 @@ export interface ProfileData {
   phone: string | null
   role: string
   approved_at: string | null
+  onboarding_completed_at?: string | null
   equip_set?: string | null
   equip_weapon?: string | null
   equip_accessory?: string | null
+}
+
+export interface GuildLinks {
+  discord_url: string
+  whatsapp_url: string
 }
 
 export interface MemberProfileData {

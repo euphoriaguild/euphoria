@@ -149,6 +149,19 @@ def approve_profile(user_id: str, role: str, approved_at: Optional[str]) -> None
         )
 
 
+def complete_onboarding(user_id: str, completed_at: str) -> None:
+    db.execute(
+        """
+        UPDATE dbo.profiles
+        SET onboarding_completed_at = ?
+        WHERE user_id = ?
+          AND approved_at IS NOT NULL
+          AND onboarding_completed_at IS NULL
+        """,
+        [completed_at, user_id],
+    )
+
+
 def update_member_by_nick(nick: str, fields: dict) -> None:
     allowed = {"char_class", "resets", "level"}
     sets = []
@@ -186,6 +199,18 @@ def get_member_profile_by_nick(nick: str) -> dict | None:
         """,
         [nick],
     )
+
+
+def approved_nick_exists(nick: str) -> bool:
+    row = db.fetch_one(
+        """
+        SELECT 1 AS x FROM dbo.profiles
+        WHERE LOWER(nick_mudomix) = LOWER(?)
+          AND approved_at IS NOT NULL
+        """,
+        [nick],
+    )
+    return row is not None
 
 
 def update_equipment_by_nick(nick: str, fields: dict) -> None:

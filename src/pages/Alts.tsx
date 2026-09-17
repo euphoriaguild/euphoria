@@ -114,8 +114,7 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
   const [sideFilter, setSideFilter] = useState<'all' | 'euphoria' | 'blacklist'>(fixedSide ?? 'all')
   const [busy, setBusy] = useState(false)
 
-  // Form: criar novo vínculo
-  const [formSide, setFormSide] = useState<'euphoria' | 'blacklist'>(fixedSide ?? 'euphoria')
+  // Form: apenas Blacklist (Contas & Alts vem do onboarding)
   const [mainNick, setMainNick] = useState('')
   const [altNick, setAltNick] = useState('')
   const [mainClass, setMainClass] = useState('ELF')
@@ -132,6 +131,13 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
 
   // Modal de detalhes
   const [selectedGroup, setSelectedGroup] = useState<AltGroup | null>(null)
+
+  function canEditGroup(group: AltGroup): boolean {
+    if (isStaff) return true
+    if (group.side === 'blacklist') return false
+    if (!myNick) return false
+    return group.mainNick.toLowerCase() === myNick.toLowerCase()
+  }
 
   async function load() {
     setLoading(true)
@@ -174,17 +180,16 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
     return matchSide && matchSearch
   })
 
-  async function handleCreate() {
-    // Em modo restrito, usa o nick do membro logado
-    const nickToUse = restrictedMode && myNick ? myNick : mainNick.trim()
-    if (!nickToUse) { alert('Informe a conta principal.'); return }
+  async function handleCreateBlacklist() {
+    if (!isStaff) return
+    if (!mainNick.trim()) { alert('Informe o nick da main.'); return }
     setBusy(true)
     try {
       await api.createAlt({
-        main_nick: nickToUse,
+        main_nick: mainNick.trim(),
         alt_nick: altNick.trim() || undefined,
-        side: formSide,
-        main_class: formSide === 'blacklist' ? mainClass : undefined,
+        side: 'blacklist',
+        main_class: mainClass,
         notes: notes.trim() || undefined,
       })
       setMainNick(''); setAltNick(''); setNotes('')
@@ -197,6 +202,7 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
   }
 
   async function handleAddAlt(group: AltGroup) {
+    if (!canEditGroup(group)) return
     if (!addAltValue.trim()) return
     setBusy(true)
     try {
@@ -204,10 +210,8 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
         main_nick: group.mainNick,
         alt_nick: addAltValue.trim(),
         side: group.side,
-        // Para "Nossa Guilda" a classe é sempre puxada ao vivo do perfil (não precisa salvar).
         main_class: group.side === 'blacklist' ? (group.mainClass ?? undefined) : undefined,
       })
-      // Remove o placeholder "sem alt" já que agora existe uma conta real
       if (group.placeholderId !== null) {
         await api.deleteAlt(group.placeholderId)
       }
@@ -221,7 +225,8 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
     }
   }
 
-  async function handleRemoveAlt(id: number) {
+  async function handleRemoveAlt(id: number, group: AltGroup) {
+    if (!canEditGroup(group)) return
     if (!confirm('Remover esta conta?')) return
     setBusy(true)
     try {
@@ -240,7 +245,8 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
     setEditAltNotes(r.notes ?? '')
   }
 
-  async function handleSaveEditAlt() {
+  async function handleSaveEditAlt(group: AltGroup) {
+    if (!canEditGroup(group)) return
     if (editingAltId === null) return
     setBusy(true)
     try {
@@ -260,6 +266,7 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
   }
 
   async function handleRemoveGroup(group: AltGroup) {
+    if (!canEditGroup(group)) return
     if (!confirm(`Remover ${group.mainNick} e todas as contas vinculadas?`)) return
     setBusy(true)
     try {
@@ -339,7 +346,7 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
                   Lista restrita no momento
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                  A lista completa de contas está visível apenas para a staff. Você pode cadastrar e gerenciar suas próprias contas abaixo.
+                  A lista completa de contas está visível apenas para a staff. Você pode gerenciar apenas as suas próprias contas (alts) nos cards abaixo.
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8, lineHeight: 1.5 }}>
                   <strong>Precisa de ajuda?</strong> Procure as lideranças: <span style={{ color: 'var(--accent-primary)' }}>Weliz</span>, <span style={{ color: 'var(--accent-primary)' }}>MARLBORO</span>, <span style={{ color: 'var(--accent-primary)' }}>zkv1rus</span>, <span style={{ color: 'var(--accent-primary)' }}>Arquina</span>, <span style={{ color: 'var(--accent-primary)' }}>MarinhasRN</span>, <span style={{ color: 'var(--accent-primary)' }}>pacheco</span>, <span style={{ color: 'var(--accent-primary)' }}>S4mCro</span> ou <span style={{ color: 'var(--accent-primary)' }}>gug4ofps</span>.
@@ -349,110 +356,57 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
           </div>
         )}
 
-        {/* Formulário de cadastro - disponível para todos os membros */}
-        <div className="card" style={{ marginBottom: 16 }}>
-          {!fixedSide && (
-            <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
-              <button
-                  onClick={() => setFormSide('euphoria')}
-                  className={formSide === 'euphoria' ? 'btn btn-primary' : 'btn btn-ghost'}
-                  style={{ fontSize: 12 }}
-                >
-                  + Nossa Guilda
-                </button>
-                {/* Botão de blacklist só aparece quando não está em modo restrito */}
-                {!restrictedMode && (
-                  <button
-                    onClick={() => setFormSide('blacklist')}
-                    className={formSide === 'blacklist' ? 'btn btn-primary' : 'btn btn-ghost'}
-                    style={{ fontSize: 12 }}
-                  >
-                    + Blacklist
-                  </button>
-                )}
-              </div>
-          )}
-
-            {formSide === 'euphoria' ? (
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {/* Em modo restrito, o nick da main é fixo no nick do membro logado */}
-                {restrictedMode && myNick ? (
-                  <input
-                    value={myNick}
-                    disabled
-                    style={{
-                      flex: '1 1 160px', padding: '8px 10px', background: 'var(--bg-800)',
-                      border: '1px solid var(--border)', borderRadius: 6,
-                      color: 'var(--text-muted)', fontSize: 13, outline: 'none',
-                    }}
-                  />
-                ) : (
-                  <AutocompleteInput value={mainNick} onChange={setMainNick} suggestions={members} placeholder="Conta principal (nick de membro)" />
-                )}
-                <AutocompleteInput value={altNick} onChange={setAltNick} suggestions={members} placeholder="Nick do alt (opcional)" />
-                <input
-                  value={notes}
-                  onChange={e => setNotes(e.target.value)}
-                  placeholder="Observações (opcional)"
-                  style={{
-                    flex: '2 1 200px', padding: '8px 10px', background: 'var(--bg-700)',
-                    border: '1px solid var(--border)', borderRadius: 6,
-                    color: 'var(--text-primary)', fontSize: 13, outline: 'none',
-                  }}
-                />
-                <button className="btn btn-primary" onClick={handleCreate} disabled={busy}>
-                  <Plus size={14} /> Adicionar
-                </button>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <input
-                  value={mainNick}
-                  onChange={e => setMainNick(e.target.value)}
-                  placeholder="Nick da main (blacklist)"
-                  style={{
-                    flex: '1 1 160px', padding: '8px 10px', background: 'var(--bg-700)',
-                    border: '1px solid var(--border)', borderRadius: 6,
-                    color: 'var(--text-primary)', fontSize: 13, outline: 'none',
-                  }}
-                />
-                <select
-                  value={mainClass}
-                  onChange={e => setMainClass(e.target.value)}
-                  style={{
-                    padding: '8px 10px', background: 'var(--bg-700)',
-                    border: '1px solid var(--border)', borderRadius: 6,
-                    color: 'var(--text-primary)', fontSize: 13,
-                  }}
-                >
-                  {CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-                <input
-                  value={altNick}
-                  onChange={e => setAltNick(e.target.value)}
-                  placeholder="Conta dele (opcional, pode add depois)"
-                  style={{
-                    flex: '1 1 180px', padding: '8px 10px', background: 'var(--bg-700)',
-                    border: '1px solid var(--border)', borderRadius: 6,
-                    color: 'var(--text-primary)', fontSize: 13, outline: 'none',
-                  }}
-                />
-                <input
-                  value={notes}
-                  onChange={e => setNotes(e.target.value)}
-                  placeholder="Observações (opcional)"
-                  style={{
-                    flex: '2 1 200px', padding: '8px 10px', background: 'var(--bg-700)',
-                    border: '1px solid var(--border)', borderRadius: 6,
-                    color: 'var(--text-primary)', fontSize: 13, outline: 'none',
-                  }}
-                />
-                <button className="btn btn-primary" onClick={handleCreate} disabled={busy}>
-                  <Plus size={14} /> Adicionar
-                </button>
-              </div>
-            )}
+        {/* Formulário: apenas Blacklist. Contas & Alts (euphoria) vêm do onboarding. */}
+        {isStaff && (fixedSide === 'blacklist' || (!fixedSide && sideFilter === 'blacklist')) && (
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <input
+                value={mainNick}
+                onChange={e => setMainNick(e.target.value)}
+                placeholder="Nick da main (blacklist)"
+                style={{
+                  flex: '1 1 160px', padding: '8px 10px', background: 'var(--bg-700)',
+                  border: '1px solid var(--border)', borderRadius: 6,
+                  color: 'var(--text-primary)', fontSize: 13, outline: 'none',
+                }}
+              />
+              <select
+                value={mainClass}
+                onChange={e => setMainClass(e.target.value)}
+                style={{
+                  padding: '8px 10px', background: 'var(--bg-700)',
+                  border: '1px solid var(--border)', borderRadius: 6,
+                  color: 'var(--text-primary)', fontSize: 13,
+                }}
+              >
+                {CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <input
+                value={altNick}
+                onChange={e => setAltNick(e.target.value)}
+                placeholder="Conta dele (opcional, pode add depois)"
+                style={{
+                  flex: '1 1 180px', padding: '8px 10px', background: 'var(--bg-700)',
+                  border: '1px solid var(--border)', borderRadius: 6,
+                  color: 'var(--text-primary)', fontSize: 13, outline: 'none',
+                }}
+              />
+              <input
+                value={notes}
+                onChange={e => setNotes(e.target.value)}
+                placeholder="Observações (opcional)"
+                style={{
+                  flex: '2 1 200px', padding: '8px 10px', background: 'var(--bg-700)',
+                  border: '1px solid var(--border)', borderRadius: 6,
+                  color: 'var(--text-primary)', fontSize: 13, outline: 'none',
+                }}
+              />
+              <button className="btn btn-primary" onClick={handleCreateBlacklist} disabled={busy}>
+                <Plus size={14} /> Adicionar
+              </button>
+            </div>
           </div>
+        )}
 
         {/* Filtros */}
         <div className="card" style={{ marginBottom: 16 }}>
@@ -502,6 +456,7 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
               const key = `${g.side}::${g.mainNick}`
               const visibleAlts = g.rows.slice(0, 5)
               const hiddenCount = g.rows.length - 5
+              const editable = canEditGroup(g)
               return (
                 <div key={key} className="card" style={{ padding: '12px 14px' }}>
                   {/* Header */}
@@ -523,10 +478,12 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
                         )}
                       </div>
                     </div>
-                    <button onClick={(e) => { e.stopPropagation(); handleRemoveGroup(g) }} disabled={busy}
-                      style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 2 }}>
-                      <Trash2 size={13} />
-                    </button>
+                    {editable && (
+                      <button onClick={(e) => { e.stopPropagation(); handleRemoveGroup(g) }} disabled={busy}
+                        style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 2 }}>
+                        <Trash2 size={13} />
+                      </button>
+                    )}
                   </div>
 
                   {/* Lista de alts (máximo 5) */}
@@ -542,10 +499,12 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
                           padding: '4px 8px', background: 'var(--bg-700)', borderRadius: 5, fontSize: 12,
                         }}>
                           <span>{r.alt_nick}</span>
-                          <button onClick={(e) => { e.stopPropagation(); handleRemoveAlt(r.id) }} disabled={busy}
-                            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 0 }}>
-                            <X size={12} />
-                          </button>
+                          {editable && (
+                            <button onClick={(e) => { e.stopPropagation(); handleRemoveAlt(r.id, g) }} disabled={busy}
+                              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 0 }}>
+                              <X size={12} />
+                            </button>
+                          )}
                         </div>
                       ))}
                       {hiddenCount > 0 && (
@@ -562,14 +521,23 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
                     </div>
                   )}
 
-                  {/* Botão adicionar */}
-                  <button
-                    className="btn btn-ghost"
-                    style={{ fontSize: 11, padding: '4px 10px', width: '100%', justifyContent: 'center' }}
-                    onClick={() => setSelectedGroup(g)}
-                  >
-                    <Plus size={11} /> Adicionar / Editar
-                  </button>
+                  {editable ? (
+                    <button
+                      className="btn btn-ghost"
+                      style={{ fontSize: 11, padding: '4px 10px', width: '100%', justifyContent: 'center' }}
+                      onClick={() => setSelectedGroup(g)}
+                    >
+                      <Plus size={11} /> Adicionar / Editar
+                    </button>
+                  ) : (
+                    <button
+                      className="btn btn-ghost"
+                      style={{ fontSize: 11, padding: '4px 10px', width: '100%', justifyContent: 'center' }}
+                      onClick={() => setSelectedGroup(g)}
+                    >
+                      Ver detalhes
+                    </button>
+                  )}
                 </div>
               )
             })}
@@ -578,7 +546,9 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
       </div>
 
       {/* Modal de detalhes */}
-      {selectedGroup && (
+      {selectedGroup && (() => {
+        const editable = canEditGroup(selectedGroup)
+        return (
         <div
           style={{
             position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
@@ -594,7 +564,6 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
               padding: 20, position: 'relative',
             }}
           >
-            {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
               <div>
                 <div style={{ fontWeight: 700, fontSize: 18 }}>{selectedGroup.mainNick}</div>
@@ -614,10 +583,12 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
-                <button onClick={() => handleRemoveGroup(selectedGroup)} disabled={busy}
-                  style={{ background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer', padding: 4 }}>
-                  <Trash2 size={16} />
-                </button>
+                {editable && (
+                  <button onClick={() => handleRemoveGroup(selectedGroup)} disabled={busy}
+                    style={{ background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer', padding: 4 }}>
+                    <Trash2 size={16} />
+                  </button>
+                )}
                 <button onClick={() => { setSelectedGroup(null); setAddingAltFor(null); setEditingAltId(null) }}
                   style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4 }}>
                   <X size={18} />
@@ -625,7 +596,6 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
               </div>
             </div>
 
-            {/* Lista de alts */}
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, fontWeight: 600 }}>
                 Contas vinculadas ({selectedGroup.rows.length})
@@ -637,7 +607,7 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {selectedGroup.rows.map(r => (
-                    editingAltId === r.id ? (
+                    editingAltId === r.id && editable ? (
                       <div key={r.id} style={{
                         display: 'flex', alignItems: 'center', gap: 6,
                         padding: '8px 10px', background: 'var(--bg-700)', borderRadius: 6,
@@ -663,7 +633,7 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
                             color: 'var(--text-muted)', fontSize: 11, outline: 'none',
                           }}
                         />
-                        <button onClick={handleSaveEditAlt} disabled={busy}
+                        <button onClick={() => handleSaveEditAlt(selectedGroup)} disabled={busy}
                           style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 4 }}>
                           <Check size={14} />
                         </button>
@@ -680,14 +650,18 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
                         <span style={{ fontWeight: 500 }}>{r.alt_nick}</span>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           {r.notes && <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{r.notes}</span>}
-                          <button onClick={() => startEditAlt(r)} disabled={busy}
-                            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 2 }}>
-                            <Pencil size={12} />
-                          </button>
-                          <button onClick={() => handleRemoveAlt(r.id)} disabled={busy}
-                            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 2 }}>
-                            <X size={14} />
-                          </button>
+                          {editable && (
+                            <>
+                              <button onClick={() => startEditAlt(r)} disabled={busy}
+                                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 2 }}>
+                                <Pencil size={12} />
+                              </button>
+                              <button onClick={() => handleRemoveAlt(r.id, selectedGroup)} disabled={busy}
+                                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 2 }}>
+                                <X size={14} />
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
                     )
@@ -696,45 +670,47 @@ export function Alts({ fixedSide }: { fixedSide?: 'euphoria' | 'blacklist' } = {
               )}
             </div>
 
-            {/* Adicionar nova alt */}
-            {addingAltFor === `${selectedGroup.side}::${selectedGroup.mainNick}` ? (
-              <div style={{ display: 'flex', gap: 6 }}>
-                {selectedGroup.side === 'euphoria' ? (
-                  <AutocompleteInput value={addAltValue} onChange={setAddAltValue} suggestions={members} placeholder="Nick do alt" />
-                ) : (
-                  <input
-                    value={addAltValue}
-                    onChange={e => setAddAltValue(e.target.value)}
-                    placeholder="Nick do alt"
-                    autoFocus
-                    style={{
-                      flex: 1, padding: '8px 10px', background: 'var(--bg-700)',
-                      border: '1px solid var(--accent)', borderRadius: 6,
-                      color: 'var(--text-primary)', fontSize: 13, outline: 'none',
-                    }}
-                  />
-                )}
-                <button className="btn btn-primary" style={{ padding: '8px 14px' }}
-                  onClick={() => handleAddAlt(selectedGroup)} disabled={busy}>
-                  <Plus size={14} />
+            {editable && (
+              addingAltFor === `${selectedGroup.side}::${selectedGroup.mainNick}` ? (
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {selectedGroup.side === 'euphoria' ? (
+                    <AutocompleteInput value={addAltValue} onChange={setAddAltValue} suggestions={members} placeholder="Nick do alt" />
+                  ) : (
+                    <input
+                      value={addAltValue}
+                      onChange={e => setAddAltValue(e.target.value)}
+                      placeholder="Nick do alt"
+                      autoFocus
+                      style={{
+                        flex: 1, padding: '8px 10px', background: 'var(--bg-700)',
+                        border: '1px solid var(--accent)', borderRadius: 6,
+                        color: 'var(--text-primary)', fontSize: 13, outline: 'none',
+                      }}
+                    />
+                  )}
+                  <button className="btn btn-primary" style={{ padding: '8px 14px' }}
+                    onClick={() => handleAddAlt(selectedGroup)} disabled={busy}>
+                    <Plus size={14} />
+                  </button>
+                  <button className="btn btn-ghost" style={{ padding: '8px 14px' }}
+                    onClick={() => { setAddingAltFor(null); setAddAltValue('') }}>
+                    <X size={14} />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  className="btn btn-ghost"
+                  style={{ width: '100%', justifyContent: 'center', padding: '10px' }}
+                  onClick={() => { setAddingAltFor(`${selectedGroup.side}::${selectedGroup.mainNick}`); setAddAltValue('') }}
+                >
+                  <Plus size={14} /> Adicionar conta
                 </button>
-                <button className="btn btn-ghost" style={{ padding: '8px 14px' }}
-                  onClick={() => { setAddingAltFor(null); setAddAltValue('') }}>
-                  <X size={14} />
-                </button>
-              </div>
-            ) : (
-              <button
-                className="btn btn-ghost"
-                style={{ width: '100%', justifyContent: 'center', padding: '10px' }}
-                onClick={() => { setAddingAltFor(`${selectedGroup.side}::${selectedGroup.mainNick}`); setAddAltValue('') }}
-              >
-                <Plus size={14} /> Adicionar conta
-              </button>
+              )
             )}
           </div>
         </div>
-      )}
+        )
+      })()}
     </>
   )
 }

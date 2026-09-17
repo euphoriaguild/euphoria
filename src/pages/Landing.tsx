@@ -23,7 +23,7 @@ const FEATURES = [
 ]
 
 export function Landing() {
-  const { isSignedIn, isLoaded, isApproved, profile, loadingProfile, signInWithDiscord } = useAuth()
+  const { isSignedIn, isLoaded, isApproved, needsOnboarding, profile, loadingProfile, signInWithDiscord } = useAuth()
   const navigate = useNavigate()
   const [signingIn, setSigningIn] = useState(false)
   const [error, setError] = useState('')
@@ -32,10 +32,11 @@ export function Landing() {
     if (!isLoaded || loadingProfile) return
     if (isSignedIn) {
       if (!profile?.nick_mudomix) navigate('/configurar')
+      else if (isApproved && needsOnboarding) navigate('/onboarding')
       else if (isApproved) navigate('/')
       else navigate('/pendente')
     }
-  }, [isSignedIn, isLoaded, isApproved, profile, loadingProfile, navigate])
+  }, [isSignedIn, isLoaded, isApproved, needsOnboarding, profile, loadingProfile, navigate])
 
   async function handleDiscordLogin() {
     setSigningIn(true)

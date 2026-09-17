@@ -686,6 +686,48 @@ async def approve_profile(
     return {"ok": True}
 
 
+class OnboardingCompletePayload(BaseModel):
+    statute_accepted: bool
+
+
+@app.post("/api/onboarding/complete")
+async def complete_onboarding(
+    body: OnboardingCompletePayload,
+    user: dict = Depends(require_auth),
+):
+    """Marca onboarding concluído (aprovado + aceitou estatuto). Alts são opcionais."""
+    if not body.statute_accepted:
+        raise HTTPException(status_code=400, detail="É necessário aceitar o Estatuto.")
+
+    user_id = user.get("sub")
+    me = store.get_profile_by_user_id(user_id)
+    if not me:
+        raise HTTPException(status_code=404, detail="Perfil não encontrado")
+    if me.get("approved_at") is None and me.get("role") not in ("member", "staff", "admin"):
+        raise HTTPException(status_code=403, detail="Aguarde aprovação da staff.")
+    if me.get("onboarding_completed_at"):
+        return {"ok": True, "already_completed": True}
+
+    completed_at = datetime.now(timezone.utc).isoformat()
+    try:
+        store.complete_onboarding(user_id, completed_at)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {"ok": True}
+
+
+@app.get("/api/guild/links")
+async def get_guild_links(_user: dict = Depends(require_auth)):
+    """Links oficiais Discord / WhatsApp (placeholders via env)."""
+    return {
+        "discord_url": os.getenv("GUILD_DISCORD_URL", "").strip()
+        or "https://discord.gg/euphoria-placeholder",
+        "whatsapp_url": os.getenv("GUILD_WHATSAPP_URL", "").strip()
+        or "https://chat.whatsapp.com/euphoria-placeholder",
+    }
+
+
 class UpdateMemberPayload(BaseModel):
     nick_mudomix: str
     char_class: Optional[str] = None
@@ -1090,35 +1132,41 @@ async def list_alts(user: dict = Depends(require_auth)):
 
 @app.post("/api/alts")
 async def create_alt(body: AltCreatePayload, user: dict = Depends(require_auth)):
-    """Membro cadastra uma conta alt vinculada a um jogador (ou só a main, sem alt ainda)."""
+    """Cadastra alt vinculada a um main. Euphoria: main deve ser membro aprovado (onboarding)."""
     user_id = user.get("sub")
     me = _get_requester_profile(user_id)
     _require_member(me)
-    my_nick = me.get("nick_mudomix")
+    my_nick = (me.get("nick_mudomix") or "").strip()
     is_staff = me.get("role") in ("staff", "admin")
-    visible = _get_alts_visibility()
-    restricted_mode = not is_staff and not visible
 
     if body.side not in ("euphoria", "blacklist"):
         raise HTTPException(status_code=400, detail="side deve ser 'euphoria' ou 'blacklist'")
 
-    if restricted_mode:
-        if body.side == "blacklist":
+    main_nick = body.main_nick.strip()
+    if not main_nick:
+        raise HTTPException(status_code=400, detail="Informe a conta principal.")
+
+    if body.side == "blacklist":
+        if not is_staff:
+            raise HTTPException(status_code=403, detail="Apenas staff pode gerenciar a blacklist.")
+    else:
+        # Contas & Alts: main só de membro aprovado; membro só no próprio nick
+        if not store.approved_nick_exists(main_nick):
             raise HTTPException(
-                status_code=403,
-                detail="Apenas staff pode adicionar à blacklist quando a lista está restrita.",
+                status_code=400,
+                detail="Conta main deve ser um membro aprovado (cadastro via onboarding).",
             )
-        if body.main_nick.strip().lower() != my_nick.lower():
+        if not is_staff and main_nick.lower() != my_nick.lower():
             raise HTTPException(
                 status_code=403,
-                detail="Você só pode adicionar contas vinculadas ao seu próprio nick.",
+                detail="Você só pode adicionar alts vinculadas ao seu próprio nick.",
             )
 
     alt_nick = body.alt_nick.strip() if body.alt_nick and body.alt_nick.strip() else None
 
     try:
         data = store.insert_alt(
-            body.main_nick.strip(),
+            main_nick,
             alt_nick,
             body.side,
             body.notes,
@@ -1133,20 +1181,21 @@ async def create_alt(body: AltCreatePayload, user: dict = Depends(require_auth))
 
 @app.patch("/api/alts/{alt_id}")
 async def update_alt(alt_id: int, body: AltUpdatePayload, user: dict = Depends(require_auth)):
-    """Membro edita uma conta/alt existente."""
+    """Edita alt. Staff: qualquer; membro: só o próprio main (euphoria)."""
     user_id = user.get("sub")
     me = _get_requester_profile(user_id)
     _require_member(me)
-    my_nick = me.get("nick_mudomix")
+    my_nick = (me.get("nick_mudomix") or "").strip()
     is_staff = me.get("role") in ("staff", "admin")
-    visible = _get_alts_visibility()
-    restricted_mode = not is_staff and not visible
 
-    if restricted_mode:
-        alt = store.get_alt_by_id(alt_id)
-        if not alt:
-            raise HTTPException(status_code=404, detail="Alt não encontrado")
-        if alt.get("side") == "blacklist" or alt.get("main_nick", "").lower() != my_nick.lower():
+    alt = store.get_alt_by_id(alt_id)
+    if not alt:
+        raise HTTPException(status_code=404, detail="Alt não encontrado")
+
+    if not is_staff:
+        if alt.get("side") == "blacklist":
+            raise HTTPException(status_code=403, detail="Apenas staff pode editar a blacklist.")
+        if (alt.get("main_nick") or "").lower() != my_nick.lower():
             raise HTTPException(status_code=403, detail="Você só pode editar suas próprias contas.")
 
     update_data = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -1165,20 +1214,21 @@ async def update_alt(alt_id: int, body: AltUpdatePayload, user: dict = Depends(r
 
 @app.delete("/api/alts/{alt_id}")
 async def delete_alt(alt_id: int, user: dict = Depends(require_auth)):
-    """Membro remove uma conta/alt."""
+    """Remove alt. Staff: qualquer; membro: só o próprio main (euphoria)."""
     user_id = user.get("sub")
     me = _get_requester_profile(user_id)
     _require_member(me)
-    my_nick = me.get("nick_mudomix")
+    my_nick = (me.get("nick_mudomix") or "").strip()
     is_staff = me.get("role") in ("staff", "admin")
-    visible = _get_alts_visibility()
-    restricted_mode = not is_staff and not visible
 
-    if restricted_mode:
-        alt = store.get_alt_by_id(alt_id)
-        if not alt:
-            raise HTTPException(status_code=404, detail="Alt não encontrado")
-        if alt.get("side") == "blacklist" or alt.get("main_nick", "").lower() != my_nick.lower():
+    alt = store.get_alt_by_id(alt_id)
+    if not alt:
+        raise HTTPException(status_code=404, detail="Alt não encontrado")
+
+    if not is_staff:
+        if alt.get("side") == "blacklist":
+            raise HTTPException(status_code=403, detail="Apenas staff pode remover da blacklist.")
+        if (alt.get("main_nick") or "").lower() != my_nick.lower():
             raise HTTPException(status_code=403, detail="Você só pode remover suas próprias contas.")
 
     try:

@@ -30,6 +30,7 @@ interface AuthContextValue {
   loadingProfile: boolean
   isApproved: boolean
   isStaff: boolean
+  needsOnboarding: boolean
   refreshProfile: () => Promise<void>
   signInWithDiscord: () => Promise<void>
   signOut: () => Promise<void>
@@ -168,6 +169,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isSignedIn = !!user?.id && !!loadSelfSession()?.accessToken
   const isApproved = ['member', 'staff', 'admin'].includes(profile?.role ?? '')
   const isStaff = ['staff', 'admin'].includes(profile?.role ?? '')
+  const needsOnboarding = isApproved && !profile?.onboarding_completed_at
 
   return (
     <AuthContext.Provider
@@ -179,6 +181,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loadingProfile,
         isApproved,
         isStaff,
+        needsOnboarding,
         refreshProfile,
         signInWithDiscord,
         signOut,

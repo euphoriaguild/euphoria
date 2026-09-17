@@ -46,6 +46,7 @@ export function ProtectedRoute({ children, requireStaff = false }: Props) {
   }
 
   if (!isApproved) return <Navigate to="/pendente" replace />
+  if (profile && !profile.onboarding_completed_at) return <Navigate to="/onboarding" replace />
   if (requireStaff && !isStaff) return <Navigate to="/" replace />
 
   return <>{children}</>

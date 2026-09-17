@@ -7,6 +7,7 @@ import { Landing }      from './pages/Landing'
 import { AuthCallback } from './pages/AuthCallback'
 import { SetupProfile } from './pages/SetupProfile'
 import { Pending }      from './pages/Pending'
+import { Onboarding }   from './pages/Onboarding'
 
 import { Dashboard }  from './pages/Dashboard'
 import { Members }    from './pages/Members'
@@ -44,6 +45,7 @@ export default function App() {
           <Route path="/auth/callback" element={<AuthCallback />} />
           <Route path="/configurar"    element={<SetupProfile />} />
           <Route path="/pendente"      element={<Pending />} />
+          <Route path="/onboarding"    element={<Onboarding />} />
 
           <Route path="/"                element={<Protected><Dashboard /></Protected>} />
           <Route path="/membros"         element={<Protected><Members /></Protected>} />

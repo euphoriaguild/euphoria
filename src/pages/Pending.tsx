@@ -12,7 +12,7 @@ export function Pending() {
   }, [isLoaded, isSignedIn, navigate])
 
   useEffect(() => {
-    if (isApproved) navigate('/', { replace: true })
+    if (isApproved) navigate('/onboarding', { replace: true })
   }, [isApproved, navigate])
 
   useEffect(() => {
