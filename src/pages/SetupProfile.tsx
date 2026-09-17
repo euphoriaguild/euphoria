@@ -48,8 +48,8 @@ export function SetupProfile() {
       })
       await refreshProfile()
       navigate('/pendente')
-    } catch {
-      setError(e instanceof Error ? e.message : 'Erro ao salvar. Verifique se o backend está em http://localhost:8000.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao salvar o perfil. Tente de novo em instantes.')
     } finally {
       setSaving(false)
     }

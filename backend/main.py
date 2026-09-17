@@ -36,6 +36,7 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "").lower() in ("1", "true", "yes")
 def _cors_origins() -> list[str]:
     """Origens CORS. Env CORS_ORIGINS=url1,url2 sobrescreve/estende o default."""
     defaults = [
+        "https://euphoria-guild.vercel.app",
         "https://euphoria-one-zeta.vercel.app",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
