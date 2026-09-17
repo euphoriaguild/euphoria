@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import json
 import os
+import struct
 import uuid
 from contextlib import contextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Generator, Iterable, Optional, Sequence
 
@@ -18,11 +19,30 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# SQL Server DATETIMEOFFSET — pyodbc type code (não suportado nativamente)
+_SQL_DATETIMEOFFSET = -155
+
 _PREFERRED_DRIVERS = (
     "ODBC Driver 18 for SQL Server",
     "ODBC Driver 17 for SQL Server",
     "SQL Server",
 )
+
+
+def _handle_datetimeoffset(dto_value: bytes) -> datetime:
+    """Converte bytes DATETIMEOFFSET do ODBC em datetime timezone-aware."""
+    # https://github.com/mkleehammer/pyodbc/wiki/Using-an-Output-Converter-function
+    tup = struct.unpack("<6hI2h", dto_value)
+    return datetime(
+        tup[0],
+        tup[1],
+        tup[2],
+        tup[3],
+        tup[4],
+        tup[5],
+        tup[6] // 1000,
+        timezone(timedelta(hours=tup[7], minutes=tup[8])),
+    )
 
 
 def pick_driver() -> str:
@@ -78,6 +98,7 @@ def build_connection_string(driver: Optional[str] = None) -> str:
 @contextmanager
 def get_connection() -> Generator[pyodbc.Connection, None, None]:
     conn = pyodbc.connect(build_connection_string())
+    conn.add_output_converter(_SQL_DATETIMEOFFSET, _handle_datetimeoffset)
     try:
         yield conn
     finally:
