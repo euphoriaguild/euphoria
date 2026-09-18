@@ -147,6 +147,7 @@ export const api = {
 
   // Admin — gerenciar membros
   getAllMembersAdmin: () => apiFetch<AdminMember[]>('/api/members/all/admin'),
+  getMembersLive: () => apiFetch<LiveMembersData>('/api/mudomix/alliance/members'),
   updateMember: (nick: string, data: { char_class?: string; resets?: number; level?: number }) =>
     apiFetch(`/api/members/${encodeURIComponent(nick)}`, { method: 'PATCH', body: JSON.stringify({ nick_mudomix: nick, ...data }) }),
 
@@ -374,4 +375,33 @@ export interface AdminMember {
   role: string
   discord: string
   approved: boolean
+}
+
+export interface LiveMember {
+  name: string
+  guild: string
+  char_class: string
+  resets: number
+  level: number
+  online: boolean
+  status_texto?: string | null
+  mapa?: string | null
+  mapa_coordenadas?: string | null
+  em_safe_zone?: boolean
+  avatar_url?: string | null
+  site_registered: boolean
+  site_role?: string | null
+  site_class?: string | null
+}
+
+export interface LiveMembersData {
+  guilds: string[]
+  members: LiveMember[]
+  total: number
+  online_count: number
+  offline_count: number
+  site_registered_count: number
+  class_distribution: Record<string, number>
+  guild_distribution: Record<string, number>
+  errors: { guilda: string; erro: string }[]
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Pencil, Save, X, ScrollText } from 'lucide-react'
 import { api } from '../lib/api'
 import { useAuth } from '../contexts/AuthContext'
+import { StatuteMarkdown } from '../components/StatuteMarkdown'
 
 export function Statute() {
   const { isStaff } = useAuth()
@@ -81,29 +82,33 @@ export function Statute() {
               }}>
                 <ScrollText size={13} />
                 Última atualização{updatedBy ? ` por ${updatedBy}` : ''} em {new Date(updatedAt).toLocaleDateString('pt-BR')}
+                {!editing && (
+                  <span style={{ marginLeft: 'auto' }}>Formato: Markdown</span>
+                )}
               </div>
             )}
 
             {editing ? (
-              <textarea
-                value={draft}
-                onChange={e => setDraft(e.target.value)}
-                rows={28}
-                style={{
-                  width: '100%', padding: '12px 14px', background: 'var(--bg-700)',
-                  border: '1px solid var(--accent)', borderRadius: 6,
-                  color: 'var(--text-primary)', fontSize: 13, outline: 'none',
-                  fontFamily: 'var(--font-mono, monospace)', lineHeight: 1.6,
-                  resize: 'vertical', boxSizing: 'border-box',
-                }}
-              />
+              <>
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
+                  Edite em Markdown: use # título, ## seção, - listas, **negrito**, etc.
+                </p>
+                <textarea
+                  value={draft}
+                  onChange={e => setDraft(e.target.value)}
+                  rows={28}
+                  placeholder={'# Estatuto Interno\n\n## 1. Conduta\n\n- Regra um\n- Regra dois\n'}
+                  style={{
+                    width: '100%', padding: '12px 14px', background: 'var(--bg-700)',
+                    border: '1px solid var(--accent)', borderRadius: 6,
+                    color: 'var(--text-primary)', fontSize: 13, outline: 'none',
+                    fontFamily: 'var(--font-mono, monospace)', lineHeight: 1.6,
+                    resize: 'vertical', boxSizing: 'border-box',
+                  }}
+                />
+              </>
             ) : (
-              <pre style={{
-                whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit',
-                fontSize: 13, lineHeight: 1.7, color: 'var(--text-secondary)', margin: 0,
-              }}>
-                {content || 'Nenhum estatuto cadastrado ainda.'}
-              </pre>
+              <StatuteMarkdown content={content} />
             )}
           </div>
         )}

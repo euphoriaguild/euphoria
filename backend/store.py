@@ -464,7 +464,7 @@ def get_donation_weekly_amount() -> str | None:
 def list_approved_nicks_classes() -> list[dict]:
     return db.fetch_all(
         """
-        SELECT nick_mudomix, char_class
+        SELECT nick_mudomix, char_class, role
         FROM dbo.profiles
         WHERE approved_at IS NOT NULL
         ORDER BY nick_mudomix ASC

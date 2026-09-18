@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { api, type AltEntry, type StatuteData } from '../lib/api'
+import { StatuteMarkdown } from '../components/StatuteMarkdown'
 
 export function Onboarding() {
   const {
@@ -17,6 +18,7 @@ export function Onboarding() {
   const [discordUrl, setDiscordUrl] = useState('')
   const [whatsappUrl, setWhatsappUrl] = useState('')
   const [accepted, setAccepted] = useState(false)
+  const [statuteOpen, setStatuteOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -64,6 +66,13 @@ export function Onboarding() {
     })()
     return () => { cancelled = true }
   }, [isApproved, needsOnboarding, mainNick])
+
+  useEffect(() => {
+    if (!statuteOpen) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setStatuteOpen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [statuteOpen])
 
   async function handleAddAlt() {
     const nick = newAlt.trim()
@@ -264,16 +273,19 @@ export function Onboarding() {
             fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
             textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12,
           }}>Estatuto da guild</div>
-          <div style={{
-            maxHeight: 280, overflowY: 'auto', padding: 14,
-            background: 'var(--bg-700)', borderRadius: 6, border: '1px solid var(--border)',
-            fontSize: 13, lineHeight: 1.65, color: 'var(--text-secondary)',
-            whiteSpace: 'pre-wrap', marginBottom: 14,
-          }}>
-            {statute?.content?.trim()
-              ? statute.content
-              : 'Nenhum estatuto cadastrado ainda. Peça à staff para publicar em Estatuto.'}
-          </div>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12, lineHeight: 1.5 }}>
+            Leia o Estatuto Interno antes de continuar.{' '}
+            <button
+              type="button"
+              onClick={() => setStatuteOpen(true)}
+              style={{
+                background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                color: 'var(--accent)', textDecoration: 'underline', fontSize: 13,
+              }}
+            >
+              Abrir Estatuto
+            </button>
+          </p>
           <label style={{
             display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer', fontSize: 13,
           }}>
@@ -316,6 +328,55 @@ export function Onboarding() {
           Sair
         </button>
       </div>
+
+      {statuteOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setStatuteOpen(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 200,
+            background: 'rgba(0,0,0,0.78)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 24,
+          }}
+        >
+          <div
+            className="card"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%', maxWidth: 640, maxHeight: '85vh',
+              padding: 20, display: 'flex', flexDirection: 'column', gap: 12,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+              <div style={{ fontWeight: 700, fontSize: 16 }}>Estatuto Interno — Euphoria</div>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setStatuteOpen(false)}
+                style={{ padding: '4px 10px', fontSize: 12 }}
+              >
+                Fechar
+              </button>
+            </div>
+            <div style={{
+              overflowY: 'auto', flex: 1, padding: 14,
+              background: 'var(--bg-700)', borderRadius: 6, border: '1px solid var(--border)',
+            }}>
+              <StatuteMarkdown content={statute?.content ?? ''} />
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => setStatuteOpen(false)}
+              style={{ justifyContent: 'center' }}
+            >
+              Entendi
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

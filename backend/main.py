@@ -21,6 +21,8 @@ import store
 import store_auth
 import oauth_discord
 import auth_tokens
+from external_api import mudomix_api, MudomixAuthError
+import mudomix_guilds
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -186,6 +188,46 @@ async def health_db():
     except Exception as exc:
         logger.exception("Health DB falhou")
         raise HTTPException(status_code=503, detail=f"SQL Server indisponível: {exc}") from exc
+
+
+@app.get("/api/external/auth/status")
+async def external_auth_status(user: dict = Depends(require_auth)):
+    """Status do token da API MU Domix (sem expor o JWT). Staff only."""
+    me = _get_requester_profile(user.get("sub"))
+    _require_staff(me)
+    return mudomix_api.status()
+
+
+@app.post("/api/external/auth/login")
+async def external_auth_login(user: dict = Depends(require_auth)):
+    """
+    Força login na API MU Domix (ou reutiliza token válido).
+    Renovação automática também ocorre em mudomix_api.request() ao expirar / 401.
+    Staff only.
+    """
+    me = _get_requester_profile(user.get("sub"))
+    _require_staff(me)
+    try:
+        await mudomix_api.login(force=True)
+    except MudomixAuthError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"ok": True, **mudomix_api.status()}
+
+
+@app.get("/api/mudomix/alliance/members")
+async def get_mudomix_alliance_members(_user: dict = Depends(require_auth)):
+    """
+    Agrega membros ao vivo chamando a API externa:
+      GET /api/guildas/Euphoria | Euph0ria | Euphor1a
+    Cruzado com profiles do site (nick main).
+    """
+    try:
+        return await mudomix_guilds.fetch_alliance_members()
+    except MudomixAuthError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Falha ao agregar membros live")
+        raise HTTPException(status_code=502, detail=f"Erro ao buscar membros: {exc}") from exc
 
 
 @app.get("/api/alliance")
@@ -719,12 +761,12 @@ async def complete_onboarding(
 
 @app.get("/api/guild/links")
 async def get_guild_links(_user: dict = Depends(require_auth)):
-    """Links oficiais Discord / WhatsApp (placeholders via env)."""
+    """Links oficiais Discord / WhatsApp (env ou defaults da guild)."""
     return {
         "discord_url": os.getenv("GUILD_DISCORD_URL", "").strip()
-        or "https://discord.gg/euphoria-placeholder",
+        or "https://discord.gg/rTw7QGz3f",
         "whatsapp_url": os.getenv("GUILD_WHATSAPP_URL", "").strip()
-        or "https://chat.whatsapp.com/euphoria-placeholder",
+        or "https://chat.whatsapp.com/F248dApriEZCV6wDLF4Uwp",
     }
 
 
