@@ -43,12 +43,6 @@ function compare(a: LiveMember, b: LiveMember, key: SortKey, dir: 'asc' | 'desc'
   return mul * String(av ?? '').localeCompare(String(bv ?? ''), undefined, { sensitivity: 'base' })
 }
 
-function toPieData(dist: Record<string, number>) {
-  return Object.entries(dist)
-    .map(([name, value]) => ({ name, value }))
-    .sort((a, b) => b.value - a.value)
-}
-
 export function Members() {
   const [data, setData] = useState<LiveMembersData | null>(null)
   const [loading, setLoading] = useState(true)
