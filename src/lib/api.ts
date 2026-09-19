@@ -196,11 +196,18 @@ export const api = {
     apiFetch(`/api/alts/${id}`, { method: 'DELETE' }),
 
   // Check-ins BC / Ilusion (SQL Server via FastAPI)
+  getServerTime: () =>
+    apiFetch<{ utc: string; brt: string; unix_ms: number; timezone: string }>('/api/time'),
   getCheckins: () =>
     apiFetch<BcCheckin[]>('/api/checkins'),
-  createCheckin: (data: { player: string; canal: string; evento: string }) =>
+  createCheckin: (data: { player: string; canal: string; evento?: string }) =>
     apiFetch<{ ok: boolean; message: string }>('/api/checkins', {
       method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  cancelCheckin: (data: { player: string; canal: string }) =>
+    apiFetch<{ ok: boolean; message: string }>('/api/checkins', {
+      method: 'DELETE',
       body: JSON.stringify(data),
     }),
 }

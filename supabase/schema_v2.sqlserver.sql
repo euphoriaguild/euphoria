@@ -376,7 +376,7 @@ BEGIN
 
   DECLARE @v_player NVARCHAR(100) = LTRIM(RTRIM(@p_player));
   DECLARE @v_count INT;
-  DECLARE @result NVARCHAR(MAX);
+  DECLARE @v_limite INT;
 
   IF @v_player IS NULL OR @v_player = N''
   BEGIN
@@ -385,7 +385,8 @@ BEGIN
   END
 
   IF @p_canal IS NULL OR @p_canal NOT IN (
-    N'bc1', N'bc2', N'bc3', N'bc4', N'bc5', N'bc6', N'bc7', N'ilusion'
+    N'bc1', N'bc2', N'bc3', N'bc4', N'bc5', N'bc6', N'bc7',
+    N'ilusion_vip', N'ilusion_geral'
   )
   BEGIN
     SELECT N'{"ok":false,"message":"Canal inválido."}' AS result;
@@ -397,6 +398,11 @@ BEGIN
     SELECT N'{"ok":false,"message":"Evento inválido."}' AS result;
     RETURN;
   END
+
+  SET @v_limite = CASE
+    WHEN @p_canal IN (N'ilusion_vip', N'ilusion_geral') THEN 5
+    ELSE 10
+  END;
 
   IF EXISTS (
     SELECT 1 FROM dbo.checkins
@@ -411,9 +417,9 @@ BEGIN
   FROM dbo.checkins
   WHERE canal = @p_canal AND evento = @p_evento;
 
-  IF @v_count >= 10
+  IF @v_count >= @v_limite
   BEGIN
-    SELECT N'{"ok":false,"message":"Sala cheia (limite de 10 jogadores)."}' AS result;
+    SELECT N'{"ok":false,"message":"Sala cheia (limite de jogadores)."}' AS result;
     RETURN;
   END
 

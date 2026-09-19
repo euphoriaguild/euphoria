@@ -1,4 +1,4 @@
-// Horários dos eventos (horário de Brasília). Pode ser [hora] ou [hora, minuto].
+// Horários dos eventos (horário de Brasília). Pode ser [hora, minuto].
 export type Horario = [number, number]
 
 export const HORARIOS_BC: Horario[] = [
@@ -11,22 +11,21 @@ export const HORARIOS_BC: Horario[] = [
 ]
 
 export const HORARIOS_ILUSION: Horario[] = [
-  [10, 25],
-  [16, 25],
-  [23, 25],
+  [9, 30],
+  [16, 30],
+  [19, 30],
+  [23, 30],
 ]
 
 // Mantido por compatibilidade (BC só com hora cheia)
 export const EVENTOS = HORARIOS_BC.map(([h]) => h)
 
-// Quantos minutos antes do evento o check-in abre
+/** Quantos minutos antes do evento o check-in abre (ex.: 09:30 → abre 09:05). */
 export const MINUTOS_ANTES = 25
 
-// Quantos jogadores cabem em cada PT
 export const MAX_TITULARES = 5
 export const MAX_POR_BC = 10
 
-// Canais agrupados por modo (Blood Castle / Ilusion Temple)
 export const MODOS = {
   bc: {
     label: 'Blood Castle',
@@ -34,16 +33,16 @@ export const MODOS = {
     horarios: HORARIOS_BC,
     titulo: '🩸 Blood Castle Check-in',
     siglaProximo: 'BC',
-    maxJogadores: 10,  // 5 Vip + 5 Principal
+    maxJogadores: 10, // 5 Vip + 5 Principal (por ordem)
     maxTitulares: 5,
   },
   ilusion: {
     label: 'Ilusion Temple',
-    canais: ['ilusion'] as const,
+    canais: ['ilusion_vip', 'ilusion_geral'] as const,
     horarios: HORARIOS_ILUSION,
     titulo: '✨ Ilusion Temple Check-in',
     siglaProximo: 'Ilusion',
-    maxJogadores: 10,  // 5 Vip + 5 Principal
+    maxJogadores: 5, // por servidor
     maxTitulares: 5,
   },
 } as const
@@ -53,7 +52,6 @@ export type CanalKey =
   | (typeof MODOS)['bc']['canais'][number]
   | (typeof MODOS)['ilusion']['canais'][number]
 
-// Mantido por compatibilidade
 export const BCS = MODOS.bc.canais
 export type BCKey = CanalKey
 
@@ -65,8 +63,9 @@ export const LABELS: Record<CanalKey, string> = {
   bc5: 'BC5',
   bc6: 'BC6',
   bc7: 'BC7',
-  ilusion: 'Ilusion',
+  ilusion_vip: 'VIP',
+  ilusion_geral: 'GERAL',
 }
 
-export const VERSAO = '2.1.0'
+export const VERSAO = '2.2.0'
 export const AUTOR = 'Well'

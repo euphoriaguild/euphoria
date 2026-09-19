@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { MODOS, LABELS, type CanalKey, type ModoKey } from '../config'
+import { MODOS, LABELS, MINUTOS_ANTES, type CanalKey, type ModoKey } from '../config'
 import { eventoAtual } from '../lib/eventos'
 import { api } from '../lib/api'
 
@@ -22,13 +22,15 @@ export function CheckinForm({ agora, modo, onSuccess }: Props) {
     if (!nome.trim()) { alert('Digite o nome do personagem'); return }
     if (!agora) { alert('Aguarde a sincronização do horário'); return }
     const evento = eventoAtual(agora, MODOS[modo].horarios)
-    if (!evento) { alert('Check-in disponível apenas 25 minutos antes do evento.'); return }
+    if (!evento) {
+      alert(`Check-in disponível apenas ${MINUTOS_ANTES} minutos antes do evento (horário de Brasília).`)
+      return
+    }
     setEnviando(true)
     try {
       const data = await api.createCheckin({
         player: nome.trim(),
         canal,
-        evento: evento.toISOString(),
       })
       alert(data?.message ?? 'Check-in realizado!')
       setNome('')

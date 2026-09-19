@@ -215,10 +215,11 @@ SET search_path = public
 AS $$
 DECLARE
   v_canais_validos TEXT[] := ARRAY[
-    'bc1','bc2','bc3','bc4','bc5','bc6','bc7','ilusion'
+    'bc1','bc2','bc3','bc4','bc5','bc6','bc7','ilusion_vip','ilusion_geral'
   ];
   v_count INTEGER;
   v_player TEXT := trim(p_player);
+  v_limite INTEGER;
 BEGIN
   IF v_player IS NULL OR v_player = '' THEN
     RETURN jsonb_build_object('ok', false, 'message', 'Nome do personagem inválido.');
@@ -240,13 +241,14 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'message', 'Você já está inscrito neste canal para este evento.');
   END IF;
 
-  -- Limite 10 por sala/evento
+  v_limite := CASE WHEN p_canal LIKE 'ilusion_%' THEN 5 ELSE 10 END;
+
   SELECT COUNT(*) INTO v_count
   FROM public.checkins
   WHERE canal = p_canal AND evento = p_evento;
 
-  IF v_count >= 10 THEN
-    RETURN jsonb_build_object('ok', false, 'message', 'Sala cheia (limite de 10 jogadores).');
+  IF v_count >= v_limite THEN
+    RETURN jsonb_build_object('ok', false, 'message', 'Sala cheia (limite de jogadores).');
   END IF;
 
   INSERT INTO public.checkins (player, canal, evento)

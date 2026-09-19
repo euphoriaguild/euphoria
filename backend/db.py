@@ -120,6 +120,22 @@ def serialize_value(value: Any) -> Any:
         return float(value)
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
+    # DATETIMEOFFSET às vezes chega como string do driver legado
+    if isinstance(value, str) and len(value) >= 19 and value[4] == "-" and value[7] == "-":
+        try:
+            import re
+            cleaned = value.strip().replace(" ", "T", 1)
+            cleaned = cleaned.replace(" +", "+").replace(" -", "-")
+            # Python fromisoformat aceita no máx. 6 dígitos de fração
+            cleaned = re.sub(
+                r"\.(\d{6})\d+(?=[+-Z])",
+                r".\1",
+                cleaned,
+            )
+            dt = datetime.fromisoformat(cleaned.replace("Z", "+00:00"))
+            return dt.isoformat()
+        except ValueError:
+            pass
     if isinstance(value, str) and len(value) >= 2 and value[0] in "[{":
         try:
             return json.loads(value)

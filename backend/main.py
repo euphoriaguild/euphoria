@@ -1488,18 +1488,114 @@ async def auth_me(user: dict = Depends(require_auth)):
 class CheckinPayload(BaseModel):
     player: str
     canal: str
-    evento: str
+    evento: Optional[str] = None  # ignorado — servidor define o slot BRT
+
+
+class CancelCheckinPayload(BaseModel):
+    player: str
+    canal: str
+
+
+@app.get("/api/time")
+async def get_server_time():
+    """Horário oficial (UTC + Brasília) para o front sincronizar a janela de check-in."""
+    import event_schedule as es
+
+    utc = es.now_utc()
+    brt = es.now_brt()
+    open_it = es.evento_aberto_para_canal("ilusion_vip")
+    open_bc = es.evento_aberto_para_canal("bc1")
+    return {
+        "utc": utc.isoformat(),
+        "brt": brt.isoformat(),
+        "unix_ms": int(utc.timestamp() * 1000),
+        "timezone": "America/Sao_Paulo",
+        "horarios_ilusion": [{"h": h, "m": m} for h, m in es.HORARIOS_ILUSION],
+        "checkin_ilusion_open": open_it is not None,
+        "checkin_ilusion_evento": open_it.isoformat() if open_it else None,
+        "checkin_bc_open": open_bc is not None,
+    }
 
 
 @app.get("/api/checkins")
 async def list_checkins(user: dict = Depends(require_auth)):
-    now = datetime.now(timezone.utc).isoformat()
-    return store.list_checkins_from(now)
+    import event_schedule as es
+    from datetime import timedelta
+
+    # Janela ampla (36h) para não perder slots por diferença de offset no DATETIMEOFFSET
+    start = es.now_utc() - timedelta(hours=36)
+    return store.list_checkins_from(start)
 
 
 @app.post("/api/checkins")
 async def create_checkin(body: CheckinPayload, user: dict = Depends(require_auth)):
-    result = store.fazer_checkin(body.player.strip(), body.canal, body.evento)
+    import event_schedule as es
+
+    player = body.player.strip()
+    canal = (body.canal or "").strip().lower()
+    if not player:
+        raise HTTPException(status_code=400, detail="Nome do personagem inválido.")
+    if not es.canal_valido(canal):
+        raise HTTPException(status_code=400, detail="Canal inválido.")
+
+    evento = es.evento_aberto_para_canal(canal)
+    if evento is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Check-in fechado. Abre 25 minutos antes do evento (horário de Brasília).",
+        )
+
+    evento_db = es.evento_para_db(evento)
+
+    if canal in es.CANAIS_ILUSION and store.player_ja_inscrito_ilusion(player, evento_db):
+        raise HTTPException(
+            status_code=400,
+            detail="Você já está inscrito no Ilusion Temple neste horário (VIP ou GERAL).",
+        )
+
+    limite = es.limite_canal(canal)
+    if store.count_checkins(canal, evento_db) >= limite:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Sala cheia (limite de {limite} jogadores).",
+        )
+
+    result = store.fazer_checkin(player, canal, evento_db)
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("message", "Falha no check-in"))
     return result
+
+
+@app.delete("/api/checkins")
+async def cancel_checkin(body: CancelCheckinPayload, user: dict = Depends(require_auth)):
+    import event_schedule as es
+
+    player = body.player.strip()
+    canal = (body.canal or "").strip().lower()
+    if not player or not es.canal_valido(canal):
+        raise HTTPException(status_code=400, detail="Dados inválidos para cancelar.")
+
+    me = _get_requester_profile(user.get("sub"))
+    role = (me.get("role") or "").lower()
+    my_nick = (me.get("nick_mudomix") or "").strip().lower()
+    is_staff = role in ("staff", "admin")
+    if not is_staff and player.lower() != my_nick:
+        raise HTTPException(
+            status_code=403,
+            detail="Você só pode cancelar o check-in do seu próprio personagem.",
+        )
+
+    evento = es.evento_aberto_para_canal(canal)
+    if evento is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Só é possível cancelar enquanto o check-in estiver aberto.",
+        )
+
+    deleted = store.delete_checkin(player, canal, es.evento_para_db(evento))
+    if deleted < 1:
+        # Fallback: dados legados gravados com offset errado (+00:00 no relógio BRT)
+        deleted = store.delete_checkin_legado_wallclock(player, canal, evento)
+    if deleted < 1:
+        raise HTTPException(status_code=404, detail="Inscrição não encontrada neste horário.")
+    return {"ok": True, "message": "Check-in cancelado."}

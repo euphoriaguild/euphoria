@@ -617,7 +617,7 @@ def insert_statute(content: str, updated_by: Optional[str]) -> None:
 
 # ── BC / IT Checkins ─────────────────────────────────────────────────────────
 
-def list_checkins_from(evento_from: str) -> list[dict]:
+def list_checkins_from(evento_from: Any) -> list[dict]:
     return db.fetch_all(
         """
         SELECT id, player, canal, evento, created_at
@@ -626,6 +626,99 @@ def list_checkins_from(evento_from: str) -> list[dict]:
         ORDER BY created_at ASC
         """,
         [evento_from],
+    )
+
+
+def count_checkins(canal: str, evento: Any) -> int:
+    row = db.fetch_one(
+        """
+        SELECT COUNT(*) AS c
+        FROM dbo.checkins
+        WHERE canal = ? AND evento = ?
+        """,
+        [canal, evento],
+    )
+    return int(row["c"]) if row else 0
+
+
+def player_ja_inscrito_ilusion(player: str, evento: Any) -> bool:
+    row = db.fetch_one(
+        """
+        SELECT 1 AS x FROM dbo.checkins
+        WHERE player = ?
+          AND evento = ?
+          AND canal IN (N'ilusion_vip', N'ilusion_geral')
+        """,
+        [player, evento],
+    )
+    if row:
+        return True
+    # Legado: mesmo relógio de parede gravado com offset +00:00 por engano
+    if hasattr(evento, "astimezone"):
+        import event_schedule as es
+        wall = evento.astimezone(es.BRT)
+        row = db.fetch_one(
+            """
+            SELECT 1 AS x FROM dbo.checkins
+            WHERE player = ?
+              AND canal IN (N'ilusion_vip', N'ilusion_geral')
+              AND DATEPART(year, SWITCHOFFSET(evento, '-03:00')) = ?
+              AND DATEPART(month, SWITCHOFFSET(evento, '-03:00')) = ?
+              AND DATEPART(day, SWITCHOFFSET(evento, '-03:00')) = ?
+              AND DATEPART(hour, SWITCHOFFSET(evento, '-03:00')) = ?
+              AND DATEPART(minute, SWITCHOFFSET(evento, '-03:00')) = ?
+            """,
+            [player, wall.year, wall.month, wall.day, wall.hour, wall.minute],
+        )
+        # Também tenta match literal no wall clock do valor armazenado (offset errado)
+        if not row:
+            row = db.fetch_one(
+                """
+                SELECT 1 AS x FROM dbo.checkins
+                WHERE player = ?
+                  AND canal IN (N'ilusion_vip', N'ilusion_geral')
+                  AND DATEPART(year, evento) = ?
+                  AND DATEPART(month, evento) = ?
+                  AND DATEPART(day, evento) = ?
+                  AND DATEPART(hour, evento) = ?
+                  AND DATEPART(minute, evento) = ?
+                """,
+                [player, wall.year, wall.month, wall.day, wall.hour, wall.minute],
+            )
+    return bool(row)
+
+
+def delete_checkin(player: str, canal: str, evento: Any) -> int:
+    return db.execute(
+        """
+        DELETE FROM dbo.checkins
+        WHERE player = ? AND canal = ? AND evento = ?
+        """,
+        [player, canal, evento],
+    )
+
+
+def delete_checkin_legado_wallclock(player: str, canal: str, evento_brt: Any) -> int:
+    """Apaga inscrição legada gravada com o mesmo HH:MM de parede e offset errado."""
+    return db.execute(
+        """
+        DELETE FROM dbo.checkins
+        WHERE player = ? AND canal = ?
+          AND DATEPART(year, evento) = ?
+          AND DATEPART(month, evento) = ?
+          AND DATEPART(day, evento) = ?
+          AND DATEPART(hour, evento) = ?
+          AND DATEPART(minute, evento) = ?
+        """,
+        [
+            player,
+            canal,
+            evento_brt.year,
+            evento_brt.month,
+            evento_brt.day,
+            evento_brt.hour,
+            evento_brt.minute,
+        ],
     )
 
 
