@@ -251,19 +251,16 @@ export function Onboarding() {
               rel="noopener noreferrer"
               style={{ flex: 1, minWidth: 140, justifyContent: 'center', textDecoration: 'none' }}
             >
-              Discord da guild
+              Discord da Guild
             </a>
             <a
-              className="btn btn-ghost"
+              className="btn btn-primary"
               href={whatsappUrl || '#'}
               target="_blank"
               rel="noopener noreferrer"
-              style={{
-                flex: 1, minWidth: 140, justifyContent: 'center', textDecoration: 'none',
-                border: '1px solid var(--border)',
-              }}
+              style={{ flex: 1, minWidth: 140, justifyContent: 'center', textDecoration: 'none' }}
             >
-              WhatsApp da guild
+              WhatsApp da Guild
             </a>
           </div>
         </div>
@@ -274,7 +271,7 @@ export function Onboarding() {
             textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12,
           }}>Estatuto da guild</div>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12, lineHeight: 1.5 }}>
-            Leia o Estatuto Interno antes de continuar.{' '}
+            Leia o{' '}
             <button
               type="button"
               onClick={() => setStatuteOpen(true)}
@@ -283,8 +280,9 @@ export function Onboarding() {
                 color: 'var(--accent)', textDecoration: 'underline', fontSize: 13,
               }}
             >
-              Abrir Estatuto
+              Estatuto Interno
             </button>
+            {' '}antes de continuar.
           </p>
           <label style={{
             display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer', fontSize: 13,
@@ -345,7 +343,7 @@ export function Onboarding() {
             className="card"
             onClick={(e) => e.stopPropagation()}
             style={{
-              width: '100%', maxWidth: 640, maxHeight: '85vh',
+              width: '100%', maxWidth: 920, maxHeight: '85vh',
               padding: 20, display: 'flex', flexDirection: 'column', gap: 12,
             }}
           >
