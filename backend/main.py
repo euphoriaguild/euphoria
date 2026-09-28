@@ -5,6 +5,7 @@ from starlette.requests import Request
 from contextlib import asynccontextmanager
 import logging
 import re
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 import os
@@ -450,29 +451,6 @@ async def get_raffle_history(
         return store.list_raffle_history(limit, offset)
     except Exception:
         return []
-
-
-class RaffleEntry(BaseModel):
-    item: str
-    winner: str
-    participants: list[str]
-
-
-@app.post("/api/raffle/save")
-async def save_raffle(body: RaffleEntry, user: dict = Depends(require_auth)):
-    """Salva um sorteio no histórico."""
-    user_id = user.get("sub")
-    conducted_by = None
-    prof = store.get_requester_profile(user_id)
-    if prof:
-        conducted_by = prof.get("nick_mudomix")
-
-    try:
-        row = store.insert_raffle_history(body.item, body.winner, conducted_by, body.participants)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Erro ao salvar: {exc}") from exc
-
-    return row if row else {"ok": True}
 
 
 # ── Profiles ───────────────────────────────────────────────────
@@ -981,78 +959,131 @@ async def update_member_equipment(nick: str, body: EquipmentPayload, user: dict 
 
 # ── Sorteio (self-service) ───────────────────────────────────────────────────
 
+RAFFLE_TIERS = ("T1", "T2", "T3", "T4", "T5", "NA")
+RAFFLE_SPIN_DURATIONS = (5, 10, 15)
+RAFFLE_COUNTDOWN_MS = 3000
+# Após o fim da animação, o resultado continua em /active por este tempo.
+RAFFLE_RESULT_VISIBLE_S = 20
+
+
 class RaffleCreatePayload(BaseModel):
     prize: str
+    tier: str
+
+
+def _validate_raffle_payload(body: RaffleCreatePayload) -> tuple[str, str]:
+    prize = body.prize.strip()
+    if not prize:
+        raise HTTPException(status_code=400, detail="Informe o prêmio do sorteio.")
+    if body.tier not in RAFFLE_TIERS:
+        raise HTTPException(status_code=400, detail="Nível do item inválido.")
+    return prize[:500], body.tier
+
+
+def _can_manage_raffle(raffle: dict, user_id: str, me: dict) -> bool:
+    return str(raffle.get("created_by") or "").lower() == str(user_id).lower() or me.get("role") in ("staff", "admin")
+
+
+def _require_open_raffle() -> dict:
+    raffle = store.get_open_raffle()
+    if not raffle:
+        raise HTTPException(status_code=400, detail="Nenhum sorteio aberto no momento.")
+    return raffle
 
 
 @app.get("/api/raffle/active")
 async def get_active_raffle(user: dict = Depends(require_auth)):
-    """Retorna o sorteio ativo, seus participantes e se o usuário já entrou."""
+    """Sorteio aberto (ou recém-girado, com os dados do giro), participantes e permissões do usuário."""
     user_id = user.get("sub")
     me = _get_requester_profile(user_id)
+    empty = {
+        "raffle": None, "participants": [], "joined": False, "my_nick": me.get("nick_mudomix"),
+        "is_creator": False, "can_manage": False, "spin": None,
+    }
 
-    raffle = store.get_open_raffle()
+    raffle = store.get_current_raffle(RAFFLE_RESULT_VISIBLE_S)
     if not raffle:
-        return {"raffle": None, "participants": [], "joined": False, "my_nick": me.get("nick_mudomix")}
+        return empty
 
-    entries = store.list_raffle_entries(raffle["id"])
-    joined = any(e.get("user_id") == user_id for e in entries)
+    is_creator = str(raffle.get("created_by") or "").lower() == str(user_id).lower()
+    spin = None
+    if raffle["status"] == "drawn":
+        participants = raffle.get("participants_snapshot") or []
+        spin = {
+            "participants": participants,
+            "winner_index": raffle["winner_index"],
+            "winner_nick": raffle["winner_nick"],
+            "offset": raffle["spin_offset"],
+            "turns": raffle["spin_turns"],
+            "duration_s": raffle["spin_duration_s"],
+            "starts_in_ms": raffle["spin_starts_in_ms"],
+        }
+        joined = me.get("nick_mudomix") in participants
+    else:
+        entries = store.list_raffle_entries(raffle["id"])
+        participants = [e["nick_mudomix"] for e in entries]
+        joined = any(str(e.get("user_id")).lower() == str(user_id).lower() for e in entries)
 
+    public = {k: raffle.get(k) for k in (
+        "id", "prize", "item_tier", "status", "created_by_nick", "created_at", "winner_nick",
+    )}
+    if not public["created_by_nick"] and raffle.get("created_by"):
+        creator = store.get_profile_by_user_id(str(raffle["created_by"]))
+        public["created_by_nick"] = creator.get("nick_mudomix") if creator else None
+    if raffle["status"] != "drawn":
+        public["winner_nick"] = None
     return {
-        "raffle": raffle,
-        "participants": [e["nick_mudomix"] for e in entries],
+        "raffle": public,
+        "participants": participants,
         "joined": joined,
         "my_nick": me.get("nick_mudomix"),
+        "is_creator": is_creator,
+        "can_manage": raffle["status"] == "open" and _can_manage_raffle(raffle, user_id, me),
+        "spin": spin,
     }
 
 
 @app.post("/api/raffle/create")
 async def create_raffle(body: RaffleCreatePayload, user: dict = Depends(require_auth)):
-    """Qualquer membro abre um novo sorteio (fecha qualquer sorteio anterior aberto)."""
+    """Qualquer membro abre um sorteio, desde que não exista outro ativo."""
     user_id = user.get("sub")
     me = _get_requester_profile(user_id)
     _require_member(me)
+    prize, tier = _validate_raffle_payload(body)
 
-    store.close_open_raffles()
-    try:
-        data = store.create_raffle(body.prize, user_id)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    return data if data else {"ok": True}
+    busy = HTTPException(status_code=409, detail="Já existe um sorteio ativo. Aguarde o giro ou o cancelamento.")
+    if store.raffle_is_spinning():
+        raise busy
+    data = store.create_raffle(prize, tier, user_id, me.get("nick_mudomix"))
+    if not data:
+        raise busy
+    return data
 
 
 @app.post("/api/raffle/edit")
 async def edit_raffle(body: RaffleCreatePayload, user: dict = Depends(require_auth)):
-    """Qualquer membro edita o prêmio do sorteio ativo."""
+    """Criador (ou staff/admin) edita prêmio e nível do sorteio aberto."""
     user_id = user.get("sub")
     me = _get_requester_profile(user_id)
-    _require_member(me)
+    raffle = _require_open_raffle()
+    if not _can_manage_raffle(raffle, user_id, me):
+        raise HTTPException(status_code=403, detail="Apenas o criador do sorteio ou a staff podem editar.")
+    prize, tier = _validate_raffle_payload(body)
 
-    raffle = store.get_open_raffle()
-    if not raffle:
-        raise HTTPException(status_code=400, detail="Nenhum sorteio aberto para editar.")
-
-    try:
-        store.update_raffle_prize(raffle["id"], body.prize)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
+    store.update_raffle(raffle["id"], prize, tier)
     return {"ok": True}
 
 
 @app.post("/api/raffle/close")
 async def close_raffle(user: dict = Depends(require_auth)):
-    """Qualquer membro fecha/cancela o sorteio ativo sem sortear vencedor."""
+    """Criador (ou staff/admin) cancela o sorteio aberto sem sortear vencedor."""
     user_id = user.get("sub")
     me = _get_requester_profile(user_id)
-    _require_member(me)
+    raffle = _require_open_raffle()
+    if not _can_manage_raffle(raffle, user_id, me):
+        raise HTTPException(status_code=403, detail="Apenas o criador do sorteio ou a staff podem cancelar.")
 
-    try:
-        store.close_open_raffles()
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
+    store.close_raffle(raffle["id"], me.get("nick_mudomix"))
     return {"ok": True}
 
 
@@ -1068,9 +1099,7 @@ async def join_raffle(user: dict = Depends(require_auth)):
     if not nick:
         raise HTTPException(status_code=400, detail="Seu perfil não tem nick definido.")
 
-    raffle = store.get_open_raffle()
-    if not raffle:
-        raise HTTPException(status_code=400, detail="Nenhum sorteio aberto no momento.")
+    raffle = _require_open_raffle()
 
     try:
         store.join_raffle(raffle["id"], user_id, nick)
@@ -1092,32 +1121,38 @@ async def leave_raffle(user: dict = Depends(require_auth)):
     return {"ok": True}
 
 
-class RaffleDrawPayload(BaseModel):
-    winner: str
+class RaffleSpinPayload(BaseModel):
+    duration_s: int = 5
 
 
-@app.post("/api/raffle/draw")
-async def draw_raffle(body: RaffleDrawPayload, user: dict = Depends(require_auth)):
-    """Registra o vencedor e fecha o sorteio ativo."""
+@app.post("/api/raffle/spin")
+async def spin_raffle(body: RaffleSpinPayload, user: dict = Depends(require_auth)):
+    """Somente o criador gira: o servidor sorteia o vencedor e agenda o giro para todos."""
     user_id = user.get("sub")
     me = _get_requester_profile(user_id)
-    _require_member(me)
+    raffle = _require_open_raffle()
+    if str(raffle.get("created_by") or "").lower() != str(user_id).lower():
+        raise HTTPException(status_code=403, detail="Apenas o criador do sorteio pode girar a roleta.")
+    if body.duration_s not in RAFFLE_SPIN_DURATIONS:
+        raise HTTPException(status_code=400, detail="Duração de giro inválida.")
 
-    raffle = store.get_open_raffle()
-    if not raffle:
-        raise HTTPException(status_code=400, detail="Nenhum sorteio aberto.")
+    participants = [e["nick_mudomix"] for e in store.list_raffle_entries(raffle["id"])]
+    if len(participants) < 2:
+        raise HTTPException(status_code=400, detail="São necessários pelo menos 2 participantes.")
 
-    entries = store.list_raffle_entries(raffle["id"])
-    participants = [e["nick_mudomix"] for e in entries]
-
-    store.draw_raffle(raffle["id"], body.winner)
-    store.insert_raffle_history(
-        raffle["prize"],
-        body.winner,
-        me.get("nick_mudomix"),
+    rng = secrets.SystemRandom()
+    spun = store.spin_raffle(
+        raffle["id"],
         participants,
+        winner_index=secrets.randbelow(len(participants)),
+        spin_offset=0.15 + rng.random() * 0.70,
+        spin_turns=5 + secrets.randbelow(3),
+        duration_s=body.duration_s,
+        countdown_ms=RAFFLE_COUNTDOWN_MS,
     )
-
+    if not spun:
+        raise HTTPException(status_code=409, detail="O sorteio já foi girado ou cancelado.")
+    store.insert_raffle_history_from_raffle(raffle["id"], me.get("nick_mudomix"))
     return {"ok": True}
 
 

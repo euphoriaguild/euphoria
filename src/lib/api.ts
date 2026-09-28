@@ -117,8 +117,6 @@ export const api = {
   // Raffle
   getRaffleHistory: (limit = 20, offset = 0) =>
     apiFetch<RaffleHistoryEntry[]>(`/api/raffle/history?limit=${limit}&offset=${offset}`),
-  saveRaffle: (item: string, winner: string, participants: string[]) =>
-    apiFetch<RaffleHistoryEntry>('/api/raffle/save', { method: 'POST', body: JSON.stringify({ item, winner, participants }) }),
 
   // World Boss
   getWorldBossToday: () => apiFetch<WorldBossToday>('/api/worldboss/today'),
@@ -170,15 +168,15 @@ export const api = {
 
   // Sorteio (self-service)
   getActiveRaffle: () => apiFetch<ActiveRaffle>('/api/raffle/active'),
-  createRaffle: (prize: string) =>
-    apiFetch<RaffleData>('/api/raffle/create', { method: 'POST', body: JSON.stringify({ prize }) }),
-  editRaffle: (prize: string) =>
-    apiFetch('/api/raffle/edit', { method: 'POST', body: JSON.stringify({ prize }) }),
+  createRaffle: (prize: string, tier: RaffleTier) =>
+    apiFetch<RaffleData>('/api/raffle/create', { method: 'POST', body: JSON.stringify({ prize, tier }) }),
+  editRaffle: (prize: string, tier: RaffleTier) =>
+    apiFetch('/api/raffle/edit', { method: 'POST', body: JSON.stringify({ prize, tier }) }),
   closeRaffle: () => apiFetch('/api/raffle/close', { method: 'POST' }),
   joinRaffle: () => apiFetch<{ ok: boolean; nick: string }>('/api/raffle/join', { method: 'POST' }),
   leaveRaffle: () => apiFetch('/api/raffle/leave', { method: 'POST' }),
-  drawRaffle: (winner: string) =>
-    apiFetch('/api/raffle/draw', { method: 'POST', body: JSON.stringify({ winner }) }),
+  spinRaffle: (duration_s: number) =>
+    apiFetch('/api/raffle/spin', { method: 'POST', body: JSON.stringify({ duration_s }) }),
 
   // Doações de Zen
   getDonations: () => apiFetch<DonationsData>('/api/donations'),
@@ -248,12 +246,26 @@ export interface AltsData {
   entries: AltEntry[]
 }
 
+export type RaffleTier = 'T1' | 'T2' | 'T3' | 'T4' | 'T5' | 'NA'
+
 export interface RaffleData {
   id: number
   prize: string
-  status: string
+  item_tier: RaffleTier | null
+  status: 'open' | 'drawn' | 'closed'
+  created_by_nick: string | null
   winner_nick: string | null
   created_at: string
+}
+
+export interface RaffleSpin {
+  participants: string[]
+  winner_index: number
+  winner_nick: string
+  offset: number
+  turns: number
+  duration_s: number
+  starts_in_ms: number
 }
 
 export interface ActiveRaffle {
@@ -261,6 +273,9 @@ export interface ActiveRaffle {
   participants: string[]
   joined: boolean
   my_nick: string | null
+  is_creator: boolean
+  can_manage: boolean
+  spin: RaffleSpin | null
 }
 
 export interface DonationMember {
@@ -283,6 +298,9 @@ export interface RaffleHistoryEntry {
   conducted_by?: string
   participants: string[]
   created_at: string
+  item_tier?: RaffleTier | null
+  created_by_nick?: string | null
+  raffle_created_at?: string | null
 }
 
 export interface WorldBossSlotRef {

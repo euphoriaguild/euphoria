@@ -203,9 +203,24 @@ BEGIN
     winner_nick NVARCHAR(100) NULL,
     created_by  NVARCHAR(100) NULL,
     created_at  DATETIMEOFFSET NOT NULL
-                CONSTRAINT DF_raffles_created_at DEFAULT SYSUTCDATETIME()
+                CONSTRAINT DF_raffles_created_at DEFAULT SYSUTCDATETIME(),
+    item_tier             NVARCHAR(10) NULL
+                          CONSTRAINT CK_raffles_item_tier CHECK (item_tier IS NULL OR item_tier IN (N'T1', N'T2', N'T3', N'T4', N'T5', N'NA')),
+    created_by_nick       NVARCHAR(100) NULL,
+    participants_snapshot NVARCHAR(MAX) NULL,  -- JSON, ordem da roleta no giro
+    winner_index          INT NULL,
+    spin_offset           FLOAT NULL,
+    spin_turns            INT NULL,
+    spin_started_at       DATETIMEOFFSET NULL,
+    spin_duration_s       INT NULL,
+    closed_by_nick        NVARCHAR(100) NULL,
+    closed_at             DATETIMEOFFSET NULL
   );
 END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'UX_raffles_single_open' AND object_id = OBJECT_ID(N'dbo.raffles'))
+  CREATE UNIQUE INDEX UX_raffles_single_open ON dbo.raffles (status) WHERE status = N'open';
 GO
 
 IF OBJECT_ID(N'dbo.raffle_entries', N'U') IS NULL
@@ -244,7 +259,12 @@ BEGIN
                   CONSTRAINT DF_raffle_history_participants DEFAULT N'[]'
                   CONSTRAINT CK_raffle_history_participants_json CHECK (ISJSON(participants) = 1),
     created_at    DATETIMEOFFSET NOT NULL
-                  CONSTRAINT DF_raffle_history_created_at DEFAULT SYSUTCDATETIME()
+                  CONSTRAINT DF_raffle_history_created_at DEFAULT SYSUTCDATETIME(),
+    raffle_id         BIGINT NULL,
+    item_tier         NVARCHAR(10) NULL
+                      CONSTRAINT CK_raffle_history_item_tier CHECK (item_tier IS NULL OR item_tier IN (N'T1', N'T2', N'T3', N'T4', N'T5', N'NA')),
+    created_by_nick   NVARCHAR(100) NULL,
+    raffle_created_at DATETIMEOFFSET NULL
   );
 END
 GO

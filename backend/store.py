@@ -7,6 +7,8 @@ import json
 from datetime import datetime
 from typing import Any, Optional
 
+import pyodbc
+
 import db
 
 
@@ -364,22 +366,17 @@ def list_raffle_history(limit: int, offset: int) -> list[dict]:
     )
 
 
-def insert_raffle_history(
-    prize: str,
-    winner_nick: str,
-    conducted_by: Optional[str],
-    participants_list: list,
-) -> dict | None:
-    participants_json = json.dumps(participants_list, ensure_ascii=False)
-    rows = db.execute_returning(
+def insert_raffle_history_from_raffle(raffle_id: int, conducted_by: Optional[str]) -> None:
+    db.execute(
         """
-        INSERT INTO dbo.raffle_history (prize, winner_nick, conducted_by, participants)
-        OUTPUT INSERTED.*
-        VALUES (?, ?, ?, ?)
+        INSERT INTO dbo.raffle_history
+          (prize, winner_nick, conducted_by, participants, raffle_id, item_tier, created_by_nick, raffle_created_at)
+        SELECT prize, winner_nick, ?, participants_snapshot, id, item_tier, created_by_nick, created_at
+        FROM dbo.raffles
+        WHERE id = ?
         """,
-        [prize, winner_nick, conducted_by, participants_json],
+        [conducted_by, raffle_id],
     )
-    return rows[0] if rows else None
 
 
 def get_open_raffle() -> dict | None:
@@ -390,6 +387,39 @@ def get_open_raffle() -> dict | None:
         ORDER BY created_at DESC
         """
     )
+
+
+def get_current_raffle(result_visible_s: int) -> dict | None:
+    """Sorteio aberto ou, senão, o último girado cujo resultado ainda está em exibição.
+
+    `spin_starts_in_ms` é relativo ao relógio do banco, para não depender do relógio do backend.
+    """
+    return db.fetch_one(
+        """
+        SELECT TOP 1 *,
+          CASE WHEN spin_started_at IS NULL THEN NULL
+               ELSE DATEDIFF_BIG(millisecond, SYSUTCDATETIME(), spin_started_at) END AS spin_starts_in_ms
+        FROM dbo.raffles
+        WHERE status = N'open'
+           OR (status = N'drawn' AND spin_started_at IS NOT NULL
+               AND DATEADD(second, spin_duration_s + ?, spin_started_at) > SYSUTCDATETIME())
+        ORDER BY CASE WHEN status = N'open' THEN 0 ELSE 1 END, id DESC
+        """,
+        [result_visible_s],
+    )
+
+
+def raffle_is_spinning(result_visible_s: int = 0) -> bool:
+    """True se há sorteio girado cuja animação (mais `result_visible_s`) ainda não terminou."""
+    row = db.fetch_one(
+        """
+        SELECT TOP 1 1 AS x FROM dbo.raffles
+        WHERE status = N'drawn' AND spin_started_at IS NOT NULL
+          AND DATEADD(second, spin_duration_s + ?, spin_started_at) > SYSUTCDATETIME()
+        """,
+        [result_visible_s],
+    )
+    return row is not None
 
 
 def list_raffle_entries(raffle_id: int) -> list[dict]:
@@ -404,24 +434,38 @@ def list_raffle_entries(raffle_id: int) -> list[dict]:
     )
 
 
-def close_open_raffles() -> None:
-    db.execute("UPDATE dbo.raffles SET status = N'closed' WHERE status = N'open'")
-
-
-def create_raffle(prize: str, created_by: str) -> dict | None:
-    rows = db.execute_returning(
+def close_raffle(raffle_id: int, closed_by_nick: Optional[str]) -> None:
+    db.execute(
         """
-        INSERT INTO dbo.raffles (prize, status, created_by)
-        OUTPUT INSERTED.*
-        VALUES (?, N'open', ?)
+        UPDATE dbo.raffles
+        SET status = N'closed', closed_by_nick = ?, closed_at = SYSUTCDATETIME()
+        WHERE id = ? AND status = N'open'
         """,
-        [prize, created_by],
+        [closed_by_nick, raffle_id],
     )
+
+
+def create_raffle(prize: str, tier: str, created_by: str, created_by_nick: Optional[str]) -> dict | None:
+    """Cria o sorteio; retorna None se já houver um aberto (índice único UX_raffles_single_open)."""
+    try:
+        rows = db.execute_returning(
+            """
+            INSERT INTO dbo.raffles (prize, item_tier, status, created_by, created_by_nick)
+            OUTPUT INSERTED.*
+            VALUES (?, ?, N'open', ?, ?)
+            """,
+            [prize, tier, created_by, created_by_nick],
+        )
+    except pyodbc.IntegrityError:
+        return None
     return rows[0] if rows else None
 
 
-def update_raffle_prize(raffle_id: int, prize: str) -> None:
-    db.execute("UPDATE dbo.raffles SET prize = ? WHERE id = ?", [prize, raffle_id])
+def update_raffle(raffle_id: int, prize: str, tier: str) -> None:
+    db.execute(
+        "UPDATE dbo.raffles SET prize = ?, item_tier = ? WHERE id = ? AND status = N'open'",
+        [prize, tier, raffle_id],
+    )
 
 
 def join_raffle(raffle_id: int, user_id: str, nick: str) -> None:
@@ -448,15 +492,41 @@ def leave_raffle(raffle_id: int, user_id: str) -> None:
     )
 
 
-def draw_raffle(raffle_id: int, winner_nick: str) -> None:
-    db.execute(
+def spin_raffle(
+    raffle_id: int,
+    participants: list[str],
+    winner_index: int,
+    spin_offset: float,
+    spin_turns: int,
+    duration_s: int,
+    countdown_ms: int,
+) -> bool:
+    """Grava o resultado e o início do giro; False se o sorteio não estava mais aberto."""
+    affected = db.execute(
         """
         UPDATE dbo.raffles
-        SET status = N'drawn', winner_nick = ?
-        WHERE id = ?
+        SET status = N'drawn',
+            winner_nick = ?,
+            participants_snapshot = ?,
+            winner_index = ?,
+            spin_offset = ?,
+            spin_turns = ?,
+            spin_duration_s = ?,
+            spin_started_at = DATEADD(millisecond, ?, SYSUTCDATETIME())
+        WHERE id = ? AND status = N'open'
         """,
-        [winner_nick, raffle_id],
+        [
+            participants[winner_index],
+            json.dumps(participants, ensure_ascii=False),
+            winner_index,
+            spin_offset,
+            spin_turns,
+            duration_s,
+            countdown_ms,
+            raffle_id,
+        ],
     )
+    return affected > 0
 
 
 # ── Donations ────────────────────────────────────────────────────────────────
