@@ -5,7 +5,7 @@ from starlette.requests import Request
 from contextlib import asynccontextmanager
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 import os
 from urllib.parse import quote
@@ -491,15 +491,28 @@ async def get_pending_profiles(user: dict = Depends(require_auth)):
 
 BRASILIA = ZoneInfo("America/Sao_Paulo")
 
-BOSS_SCHEDULE: dict[int, str | None] = {
-    0: "Phoenix",
-    1: "Hell Maine",
-    2: "Phoenix",
-    3: "Kayn",
-    4: None,
-    5: "Hydra",
-    6: "Zaikan",
+_WEEKEND_SLOTS = [(0, 0, "Zaikan"), (8, 0, "Hydra"), (16, 0, "Kayn")]
+
+# weekday (0=segunda) → [(hora, minuto, boss)] em horário de Brasília
+BOSS_SCHEDULE: dict[int, list[tuple[int, int, str]]] = {
+    0: [(20, 30, "Phoenix")],
+    1: [(20, 30, "Hell Maine")],
+    2: [(20, 30, "Phoenix")],
+    3: [],
+    4: [],
+    5: _WEEKEND_SLOTS,
+    6: _WEEKEND_SLOTS,
 }
+
+REST_REASONS: dict[int, str] = {
+    3: "PvP dos admins",
+    4: "Dia de descanso",
+}
+
+WEEKEND_CHECKIN_HOURS_BEFORE = 8
+
+# Após o início, o slot continua em foco por este tempo (montagem/consulta de partys).
+BOSS_FOCUS_GRACE_MINUTES = 60
 
 BOSS_IMAGES: dict[str, str] = {
     "Phoenix": "🔥",
@@ -514,25 +527,75 @@ def get_brasilia_now() -> datetime:
     return datetime.now(BRASILIA)
 
 
-def today_boss() -> dict:
-    """Retorna informações do boss do dia atual (horário de Brasília)."""
-    now_br = get_brasilia_now()
-    boss_name = BOSS_SCHEDULE.get(now_br.weekday())
+def _checkin_opens_at(event_at: datetime) -> datetime:
+    if event_at.weekday() in (5, 6):
+        return event_at - timedelta(hours=WEEKEND_CHECKIN_HOURS_BEFORE)
+    return event_at.replace(hour=0, minute=0)
 
-    boss_date = now_br.date().isoformat()
-    event_time = now_br.replace(hour=20, minute=30, second=0, microsecond=0).isoformat()
 
-    checkin_open = boss_name is not None and (
-        now_br.hour < 20 or (now_br.hour == 20 and now_br.minute < 30)
-    )
+def boss_slots(now_br: datetime, days_back: int = 1, days_ahead: int = 7) -> list[dict]:
+    """Slots concretos de boss ao redor de `now_br`, em ordem cronológica."""
+    today = now_br.date()
+    slots: list[dict] = []
+    for offset in range(-days_back, days_ahead + 1):
+        day = today + timedelta(days=offset)
+        for hour, minute, boss in BOSS_SCHEDULE[day.weekday()]:
+            event_at = datetime(day.year, day.month, day.day, hour, minute, tzinfo=BRASILIA)
+            opens_at = _checkin_opens_at(event_at)
+            slots.append({
+                "boss_name": boss,
+                "boss_date": day.isoformat(),
+                "weekday": day.weekday(),
+                "emoji": BOSS_IMAGES.get(boss, "👾"),
+                "event_time": event_at.isoformat(),
+                "checkin_opens_at": opens_at.isoformat(),
+                "checkin_open": opens_at <= now_br < event_at,
+                "started": now_br >= event_at,
+                "_event_at": event_at,
+            })
+    return slots
 
+
+def _public_slot(slot: dict) -> dict:
+    return {k: v for k, v in slot.items() if not k.startswith("_")}
+
+
+def focus_slot(now_br: datetime, slots: list[dict] | None = None) -> dict:
+    """Boss recém-iniciado (dentro da tolerância) ou, senão, o próximo boss."""
+    slots = slots if slots is not None else boss_slots(now_br)
+    grace = timedelta(minutes=BOSS_FOCUS_GRACE_MINUTES)
+    for s in slots:
+        if s["_event_at"] <= now_br < s["_event_at"] + grace:
+            return s
+    return next(s for s in slots if s["_event_at"] > now_br)
+
+
+def find_slot(now_br: datetime, boss_date: Optional[str], boss_name: Optional[str]) -> dict:
+    slots = boss_slots(now_br)
+    if not boss_date and not boss_name:
+        return focus_slot(now_br, slots)
+    for s in slots:
+        if s["boss_date"] == boss_date and s["boss_name"] == boss_name:
+            return s
+    raise HTTPException(status_code=400, detail="Boss não encontrado na escala.")
+
+
+def worldboss_overview(now_br: datetime) -> dict:
+    """Slot em foco (campos no topo) + slots relevantes (hoje e o slot em foco)."""
+    slots = boss_slots(now_br)
+    focus = focus_slot(now_br, slots)
+    today_iso = now_br.date().isoformat()
+    visible = [s for s in slots if s["boss_date"] == today_iso]
+    if focus not in visible:
+        visible.append(focus)
+    visible.sort(key=lambda s: s["_event_at"])
+    weekday = now_br.weekday()
     return {
-        "boss_name": boss_name,
-        "boss_date": boss_date,
-        "emoji": BOSS_IMAGES.get(boss_name, "👾") if boss_name else None,
-        "event_time": event_time,
-        "checkin_open": checkin_open,
-        "weekday": now_br.weekday(),
+        **_public_slot(focus),
+        "today_weekday": weekday,
+        "rest_reason": REST_REASONS.get(weekday),
+        "server_now": now_br.isoformat(),
+        "slots": [_public_slot(s) for s in visible],
     }
 
 
@@ -545,18 +608,36 @@ def _iso_week_start() -> str:
 
 @app.get("/api/worldboss/today")
 async def get_worldboss_today(_user: dict = Depends(require_auth)):
-    """Retorna informações do boss do dia atual."""
-    return today_boss()
+    """Boss em foco (recém-iniciado ou próximo) + bosses do dia."""
+    return worldboss_overview(get_brasilia_now())
+
+
+class WorldBossSlotPayload(BaseModel):
+    boss_date: Optional[str] = None
+    boss_name: Optional[str] = None
+
+
+def _require_open_slot(body: Optional[WorldBossSlotPayload]) -> dict:
+    now_br = get_brasilia_now()
+    slot = find_slot(now_br, body.boss_date if body else None, body.boss_name if body else None)
+    if not slot["checkin_open"]:
+        if slot["started"]:
+            raise HTTPException(status_code=400, detail="Check-in encerrado para este boss.")
+        opens = datetime.fromisoformat(slot["checkin_opens_at"])
+        raise HTTPException(
+            status_code=400,
+            detail=f"Check-in abre {opens.strftime('%d/%m às %H:%M')} (Brasília).",
+        )
+    return slot
 
 
 @app.post("/api/worldboss/checkin")
-async def worldboss_checkin(user: dict = Depends(require_auth)):
-    """Registra check-in do usuário para o boss de hoje."""
-    info = today_boss()
-    if not info["boss_name"]:
-        raise HTTPException(status_code=400, detail="Hoje é dia de descanso (sexta-feira).")
-    if not info["checkin_open"]:
-        raise HTTPException(status_code=400, detail="Check-in encerrado para hoje.")
+async def worldboss_checkin(
+    body: Optional[WorldBossSlotPayload] = None,
+    user: dict = Depends(require_auth),
+):
+    """Registra check-in do usuário para um boss (padrão: boss em foco)."""
+    info = _require_open_slot(body)
 
     user_id = user.get("sub")
     profile = store.get_profile_by_user_id(user_id)
@@ -577,27 +658,30 @@ async def worldboss_checkin(user: dict = Depends(require_auth)):
 
 
 @app.delete("/api/worldboss/checkin")
-async def worldboss_cancel_checkin(user: dict = Depends(require_auth)):
-    """Cancela check-in do usuário para o boss de hoje."""
-    info = today_boss()
-    if not info["checkin_open"]:
-        raise HTTPException(status_code=400, detail="Check-in encerrado.")
-
-    user_id = user.get("sub")
-    store.delete_wb_checkin(user_id, info["boss_date"])
+async def worldboss_cancel_checkin(
+    body: Optional[WorldBossSlotPayload] = None,
+    user: dict = Depends(require_auth),
+):
+    """Cancela check-in do usuário para um boss (padrão: boss em foco)."""
+    info = _require_open_slot(body)
+    store.delete_wb_checkin(user.get("sub"), info["boss_date"], info["boss_name"])
     return {"ok": True}
 
 
 @app.get("/api/worldboss/checkins")
 async def get_worldboss_checkins(
     date: Optional[str] = None,
+    boss: Optional[str] = None,
     _user: dict = Depends(require_auth),
 ):
-    """Retorna todos os check-ins de uma data (padrão: hoje)."""
-    if not date:
+    """Check-ins de um boss (padrão: boss em foco). Só `date` = todos os bosses da data."""
+    if not date and not boss:
+        slot = focus_slot(get_brasilia_now())
+        date, boss = slot["boss_date"], slot["boss_name"]
+    elif not date:
         date = get_brasilia_now().date().isoformat()
 
-    checkins = store.list_wb_checkins(date)
+    checkins = store.list_wb_checkins(date, boss)
 
     nicks = [c["nick_mudomix"] for c in checkins]
     if nicks:
@@ -615,7 +699,7 @@ async def get_worldboss_report(
     days: int = 30,
     user: dict = Depends(require_auth),
 ):
-    """Relatório de presença no World Boss: total de check-ins por membro e grade dos últimos N dias."""
+    """Relatório de presença no World Boss: total por membro e grade por boss (data + boss) dos últimos N dias."""
     days = max(1, min(days, 90))
     user_id = user.get("sub")
     _get_requester_profile(user_id)
@@ -624,7 +708,21 @@ async def get_worldboss_report(
     start_date = (today.fromordinal(today.toordinal() - (days - 1))).isoformat()
 
     checkins = store.list_wb_checkins_since(start_date)
-    all_days = sorted({c["boss_date"] for c in checkins})
+
+    def slot_key(c: dict) -> str:
+        return f"{c['boss_date']}|{c['boss_name']}"
+
+    def slot_order(c: dict) -> tuple:
+        weekday = datetime.fromisoformat(str(c["boss_date"])).weekday()
+        times = {b: (h, m) for h, m, b in BOSS_SCHEDULE[weekday]}
+        return (str(c["boss_date"]), times.get(c["boss_name"], (99, 99)))
+
+    slots_by_key: dict[str, dict] = {}
+    for c in sorted(checkins, key=slot_order):
+        key = slot_key(c)
+        if key not in slots_by_key:
+            slots_by_key[key] = {"key": key, "boss_date": str(c["boss_date"]), "boss_name": c["boss_name"]}
+    all_slots = list(slots_by_key.values())
 
     by_member: dict[str, dict] = {}
     for c in checkins:
@@ -633,9 +731,9 @@ async def get_worldboss_report(
             by_member[nick] = {
                 "nick_mudomix": nick,
                 "char_class": c.get("char_class") or "",
-                "days": set(),
+                "slots": set(),
             }
-        by_member[nick]["days"].add(c["boss_date"])
+        by_member[nick]["slots"].add(slot_key(c))
 
     nicks = list(by_member.keys())
     if nicks:
@@ -649,33 +747,35 @@ async def get_worldboss_report(
         {
             "nick_mudomix": m["nick_mudomix"],
             "char_class": m["char_class"],
-            "total": len(m["days"]),
-            "attended_days": sorted(m["days"]),
+            "total": len(m["slots"]),
+            "attended_slots": sorted(m["slots"]),
         }
         for m in by_member.values()
     ]
     members.sort(key=lambda m: m["total"], reverse=True)
 
-    return {"days": all_days, "members": members, "range_start": start_date, "range_end": today.isoformat()}
+    return {"slots": all_slots, "members": members, "range_start": start_date, "range_end": today.isoformat()}
 
 
 class PartiesPayload(BaseModel):
     parties: list[dict]
+    boss_date: Optional[str] = None
+    boss_name: Optional[str] = None
 
 
 @app.put("/api/worldboss/parties")
 async def save_worldboss_parties(body: PartiesPayload, user: dict = Depends(require_auth)):
-    """Admin salva as partys do boss do dia."""
+    """Staff/admin salva as partys de um boss (padrão: boss em foco)."""
     user_id = user.get("sub")
     me = _get_requester_profile(user_id)
     if me.get("role") not in ("staff", "admin"):
         raise HTTPException(status_code=403, detail="Acesso restrito a staff/admin.")
 
-    info = today_boss()
+    info = find_slot(get_brasilia_now(), body.boss_date, body.boss_name)
     try:
         store.upsert_wb_parties(
             info["boss_date"],
-            info["boss_name"] or "off",
+            info["boss_name"],
             body.parties,
             user_id,
         )
@@ -688,13 +788,15 @@ async def save_worldboss_parties(body: PartiesPayload, user: dict = Depends(requ
 @app.get("/api/worldboss/parties")
 async def get_worldboss_parties(
     date: Optional[str] = None,
+    boss: Optional[str] = None,
     _user: dict = Depends(require_auth),
 ):
-    """Retorna as partys configuradas para uma data (padrão: hoje)."""
-    if not date:
-        date = get_brasilia_now().date().isoformat()
+    """Retorna as partys de um boss (padrão: boss em foco)."""
+    if not date or not boss:
+        slot = focus_slot(get_brasilia_now())
+        date, boss = slot["boss_date"], slot["boss_name"]
 
-    data = store.get_wb_parties(date)
+    data = store.get_wb_parties(date, boss)
     if data:
         return data
     return {"parties": [], "boss_name": None}

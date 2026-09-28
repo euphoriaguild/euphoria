@@ -45,7 +45,7 @@ export function Presenca() {
   const members = (report?.members ?? []).filter(m =>
     m.nick_mudomix.toLowerCase().includes(search.trim().toLowerCase())
   )
-  const reportDays = report?.days ?? []
+  const reportSlots = report?.slots ?? []
 
   return (
     <>
@@ -86,14 +86,14 @@ export function Presenca() {
           </div>
           {report && (
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10 }}>
-              Período: {formatDay(report.range_start)} até {formatDay(report.range_end)} · {reportDays.length} dia{reportDays.length !== 1 ? 's' : ''} com boss registrado
+              Período: {formatDay(report.range_start)} até {formatDay(report.range_end)} · {reportSlots.length} boss{reportSlots.length !== 1 ? 'es' : ''} com presença registrada
             </div>
           )}
         </div>
 
         {loading ? (
           <div className="loading"><div className="spinner" /> Carregando...</div>
-        ) : !report || reportDays.length === 0 || members.length === 0 ? (
+        ) : !report || reportSlots.length === 0 || members.length === 0 ? (
           <div className="card" style={{ textAlign: 'center', padding: 40 }}>
             <ClipboardCheck size={28} style={{ color: 'var(--text-muted)', marginBottom: 8 }} />
             <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
@@ -109,9 +109,10 @@ export function Presenca() {
                   <th>Membro</th>
                   <th>Classe</th>
                   <th>Presenças</th>
-                  {reportDays.map(day => (
-                    <th key={day} style={{ textAlign: 'center', padding: '10px 6px' }}>
-                      {formatDay(day)}
+                  {reportSlots.map(s => (
+                    <th key={s.key} style={{ textAlign: 'center', padding: '10px 6px', lineHeight: 1.2 }}>
+                      {formatDay(s.boss_date)}
+                      <div style={{ fontSize: 9, fontWeight: 400, color: 'var(--text-muted)' }}>{s.boss_name}</div>
                     </th>
                   ))}
                 </tr>
@@ -125,12 +126,12 @@ export function Presenca() {
                       <span className={CLASS_COLORS[m.char_class] ?? ''}>{m.char_class || '—'}</span>
                     </td>
                     <td style={{ color: 'var(--accent)', fontWeight: 700 }}>{m.total}</td>
-                    {reportDays.map(day => {
-                      const attended = m.attended_days.includes(day)
+                    {reportSlots.map(s => {
+                      const attended = m.attended_slots.includes(s.key)
                       return (
-                        <td key={day} style={{ textAlign: 'center', padding: '6px' }}>
+                        <td key={s.key} style={{ textAlign: 'center', padding: '6px' }}>
                           <span
-                            title={`${formatDay(day)} — ${attended ? 'presente' : 'ausente'}`}
+                            title={`${formatDay(s.boss_date)} ${s.boss_name} — ${attended ? 'presente' : 'ausente'}`}
                             style={{
                               display: 'inline-flex', width: 20, height: 20, borderRadius: 4, fontSize: 10,
                               alignItems: 'center', justifyContent: 'center',

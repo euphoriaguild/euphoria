@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { CheckCircle, RefreshCw, Plus, Trash2 } from 'lucide-react'
-import { api, type WorldBossToday, type WorldBossCheckin, type WorldBossParty } from '../lib/api'
+import {
+  api, type WorldBossToday, type WorldBossCheckin, type WorldBossParty, type WorldBossSlot, type WorldBossSlotRef,
+} from '../lib/api'
 import { useAuth } from '../contexts/AuthContext'
 
 const CLASS_COLORS: Record<string, string> = {
@@ -11,15 +13,48 @@ const CLASS_COLORS: Record<string, string> = {
   'SM': 'class-sm',
 }
 
-const SCHEDULE = [
-  { day: 'Segunda',  boss: 'Phoenix',    emoji: '🔥', weekday: 0, map: 'LOST TOWER 1 (covil)', mapImage: '/world-boss/phoenix-losttower.png' },
-  { day: 'Terça',    boss: 'Hell Maine', emoji: '🔮', weekday: 1, map: 'AIDA',                mapImage: '/world-boss/hellmaine-aida.png' },
-  { day: 'Quarta',   boss: 'Phoenix',    emoji: '🔥', weekday: 2, map: 'LOST TOWER 1 (covil)', mapImage: '/world-boss/phoenix-losttower.png' },
-  { day: 'Quinta',   boss: 'Kayn',       emoji: '⚔️', weekday: 3, map: 'LOST TOWER 1',         mapImage: '/world-boss/kayn-losttower.png' },
-  { day: 'Sexta',    boss: null,         emoji: '😴', weekday: 4, map: null,                  mapImage: null },
-  { day: 'Sábado',  boss: 'Hydra',      emoji: '🐍', weekday: 5, map: 'ATLANS',              mapImage: '/world-boss/hydra-atlans.png' },
-  { day: 'Domingo',  boss: 'Zaikan',     emoji: '💀', weekday: 6, map: 'TARKAN',              mapImage: '/world-boss/zaikan-tarkan.png' },
+const BOSS_INFO: Record<string, { emoji: string; map: string; mapImage: string }> = {
+  'Phoenix':    { emoji: '🔥', map: 'LOST TOWER 1 (covil)', mapImage: '/world-boss/phoenix-losttower.png' },
+  'Hell Maine': { emoji: '🔮', map: 'AIDA',                 mapImage: '/world-boss/hellmaine-aida.png' },
+  'Kayn':       { emoji: '⚔️', map: 'LOST TOWER 1',         mapImage: '/world-boss/kayn-losttower.png' },
+  'Hydra':      { emoji: '🐍', map: 'ATLANS',               mapImage: '/world-boss/hydra-atlans.png' },
+  'Zaikan':     { emoji: '💀', map: 'TARKAN',               mapImage: '/world-boss/zaikan-tarkan.png' },
+}
+
+const WEEKEND_SLOTS = [
+  { time: '00:00', boss: 'Zaikan' },
+  { time: '08:00', boss: 'Hydra' },
+  { time: '16:00', boss: 'Kayn' },
 ]
+
+const SCHEDULE: { day: string; weekday: number; rest?: string; restEmoji?: string; slots: { time: string; boss: string }[] }[] = [
+  { day: 'Segunda', weekday: 0, slots: [{ time: '20:30', boss: 'Phoenix' }] },
+  { day: 'Terça',   weekday: 1, slots: [{ time: '20:30', boss: 'Hell Maine' }] },
+  { day: 'Quarta',  weekday: 2, slots: [{ time: '20:30', boss: 'Phoenix' }] },
+  { day: 'Quinta',  weekday: 3, rest: 'PvP dos Admins', restEmoji: '⚔️', slots: [] },
+  { day: 'Sexta',   weekday: 4, rest: 'Descanso', restEmoji: '😴', slots: [] },
+  { day: 'Sábado',  weekday: 5, slots: WEEKEND_SLOTS },
+  { day: 'Domingo', weekday: 6, slots: WEEKEND_SLOTS },
+]
+
+const DAY_FULL = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo']
+const DAY_SHORT = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
+
+const BRT = 'America/Sao_Paulo'
+
+function fmtTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: BRT })
+}
+
+function fmtDayTime(iso: string): string {
+  const d = new Date(iso)
+  const date = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: BRT })
+  return `${date} às ${fmtTime(iso)}`
+}
+
+function sameSlot(a: WorldBossSlotRef | null, b: WorldBossSlotRef | null): boolean {
+  return !!a && !!b && a.boss_date === b.boss_date && a.boss_name === b.boss_name
+}
 
 function useNow() {
   const [now, setNow] = useState(new Date())
@@ -44,6 +79,7 @@ export function WorldBoss() {
   const now = useNow()
 
   const [todayInfo, setTodayInfo] = useState<WorldBossToday | null>(null)
+  const [selectedRef, setSelectedRef] = useState<WorldBossSlotRef | null>(null)
   const [checkins, setCheckins] = useState<WorldBossCheckin[]>([])
   const [savedParties, setSavedParties] = useState<WorldBossParty[]>([])
   const [partyNames, setPartyNames] = useState<string[]>(['PT 1', 'PT 2', 'PT 3', 'PT 4'])
@@ -57,11 +93,11 @@ export function WorldBoss() {
 
   const myNick = profile?.nick_mudomix
   const myCheckedIn = checkins.some(c => c.nick_mudomix === myNick)
-  const todaySchedule = todayInfo
-    ? SCHEDULE.find(s => s.weekday === todayInfo.weekday)
-    : undefined
-  const todayMap = todaySchedule?.map ?? null
-  const todayMapImage = todaySchedule?.mapImage ?? null
+  const slot: WorldBossSlot | null =
+    todayInfo?.slots.find(s => sameSlot(s, selectedRef)) ?? todayInfo ?? null
+  const slotRef: WorldBossSlotRef | null = slot ? { boss_date: slot.boss_date, boss_name: slot.boss_name } : null
+  const slotInfo = slot ? BOSS_INFO[slot.boss_name] : undefined
+  const slotLabel = slot ? `${slot.boss_name} (${DAY_SHORT[slot.weekday]} ${fmtTime(slot.event_time)})` : ''
 
   function openMapModal(boss: string | null, map: string | null, mapImage: string | null) {
     if (!mapImage || !map) return
@@ -70,36 +106,58 @@ export function WorldBoss() {
       src: mapImage,
     })
   }
-  const load = useCallback(async () => {
+
+  const loadSlot = useCallback(async (ref: WorldBossSlotRef) => {
+    const [cins, pts] = await Promise.all([
+      api.getWorldBossCheckins(ref),
+      api.getWorldBossParties(ref),
+    ])
+    setCheckins(cins)
+    setSavedParties(pts.parties || [])
+
+    // Reconstrói o map de assignments a partir das partys salvas
+    const map: Record<string, string> = {}
+    if (pts.parties?.length) {
+      setPartyNames(pts.parties.map((p: WorldBossParty) => p.name))
+      for (const pt of pts.parties) {
+        for (const m of pt.members) map[m] = pt.name
+      }
+    } else {
+      setPartyNames(['PT 1', 'PT 2', 'PT 3', 'PT 4'])
+    }
+    setAssignments(map)
+  }, [])
+
+  const load = useCallback(async (keepRef?: WorldBossSlotRef | null) => {
     setLoading(true)
     try {
-      const [info, cins, pts] = await Promise.all([
-        api.getWorldBossToday(),
-        api.getWorldBossCheckins(),
-        api.getWorldBossParties(),
-      ])
+      const info = await api.getWorldBossToday()
       setTodayInfo(info)
-      setCheckins(cins)
-      setSavedParties(pts.parties || [])
-
-      // Reconstrói o map de assignments a partir das partys salvas
-      if (pts.parties?.length) {
-        const names = pts.parties.map((p: WorldBossParty) => p.name)
-        setPartyNames(names)
-        const map: Record<string, string> = {}
-        for (const pt of pts.parties) {
-          for (const m of pt.members) map[m] = pt.name
-        }
-        setAssignments(map)
-      }
+      const kept = keepRef ? info.slots.find(s => sameSlot(s, keepRef)) : undefined
+      const ref = kept ?? info
+      setSelectedRef({ boss_date: ref.boss_date, boss_name: ref.boss_name })
+      await loadSlot({ boss_date: ref.boss_date, boss_name: ref.boss_name })
     } catch (e) {
       console.error(e)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [loadSlot])
 
   useEffect(() => { load() }, [load])
+
+  async function selectSlot(ref: WorldBossSlotRef) {
+    if (sameSlot(ref, selectedRef)) return
+    setSelectedRef(ref)
+    setLoading(true)
+    try {
+      await loadSlot(ref)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
     if (!mapModal) return
@@ -109,13 +167,14 @@ export function WorldBoss() {
   }, [mapModal])
 
   async function handleCheckin() {
+    if (!slotRef) return
     setCheckingIn(true)
     try {
-      const res = await api.worldBossCheckin()
+      const res = await api.worldBossCheckin(slotRef)
       if (res.already_checked_in) {
-        alert('Você já fez check-in hoje!')
+        alert('Você já fez check-in para este boss!')
       } else {
-        const cins = await api.getWorldBossCheckins()
+        const cins = await api.getWorldBossCheckins(slotRef)
         setCheckins(cins)
       }
     } catch (e: any) {
@@ -126,11 +185,11 @@ export function WorldBoss() {
   }
 
   async function handleCancelCheckin() {
-    if (!confirm('Cancelar seu check-in?')) return
+    if (!slotRef || !confirm('Cancelar seu check-in?')) return
     setCheckingIn(true)
     try {
-      await api.worldBossCancelCheckin()
-      const cins = await api.getWorldBossCheckins()
+      await api.worldBossCancelCheckin(slotRef)
+      const cins = await api.getWorldBossCheckins(slotRef)
       setCheckins(cins)
     } catch (e: any) {
       alert(e?.message || 'Erro ao cancelar')
@@ -140,6 +199,7 @@ export function WorldBoss() {
   }
 
   async function handleSaveParties() {
+    if (!slotRef) return
     setSaving(true)
     try {
       const parties: WorldBossParty[] = partyNames.map(name => ({
@@ -148,7 +208,7 @@ export function WorldBoss() {
           .filter(c => assignments[c.nick_mudomix] === name)
           .map(c => c.nick_mudomix),
       }))
-      await api.saveWorldBossParties(parties)
+      await api.saveWorldBossParties(slotRef, parties)
       setSavedParties(parties)
       alert('Partys salvas com sucesso!')
     } catch (e: any) {
@@ -169,20 +229,22 @@ export function WorldBoss() {
     setDragOverParty(null)
   }
 
-  const eventDate = todayInfo ? new Date(todayInfo.event_time) : null
+  const eventDate = slot ? new Date(slot.event_time) : null
+  const opensDate = slot ? new Date(slot.checkin_opens_at) : null
+  const checkinOpen = !!eventDate && !!opensDate && now >= opensDate && now < eventDate
   const cd = eventDate ? countdown(eventDate, now) : '--:--:--'
   const isNear = eventDate
     ? eventDate.getTime() - now.getTime() < 30 * 60 * 1000 && eventDate.getTime() > now.getTime()
     : false
   const isOver = eventDate ? now > eventDate : false
 
-  // Agrupa partys salvas por coluna (para exibição)
+  const restDay = todayInfo?.rest_reason ? SCHEDULE[todayInfo.today_weekday] : undefined
 
   return (
     <>
       <div className="page-header">
         <h2>World Boss</h2>
-        <button className="btn btn-ghost" onClick={load} disabled={loading}>
+        <button className="btn btn-ghost" onClick={() => load(selectedRef)} disabled={loading}>
           <RefreshCw size={14} className={loading ? 'spin' : ''} />
           Atualizar
         </button>
@@ -193,39 +255,76 @@ export function WorldBoss() {
           <div className="loading"><div className="spinner" /> Carregando...</div>
         ) : (
           <>
-            {/* ── Boss do dia ── */}
-            {todayInfo?.boss_name ? (
+            {/* ── Dia sem boss ── */}
+            {restDay && todayInfo && (
+              <div className="card" style={{ textAlign: 'center', padding: '24px', marginBottom: 16 }}>
+                <div style={{ fontSize: 40, marginBottom: 6 }}>{restDay.restEmoji}</div>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700,
+                  color: 'var(--text-secondary)' }}>
+                  {DAY_FULL[todayInfo.today_weekday]} — {restDay.rest}
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 6 }}>
+                  Não há World Boss hoje. Confira abaixo o próximo boss.
+                </div>
+              </div>
+            )}
+
+            {/* ── Seleção de boss (dia com mais de um boss ou próximo boss) ── */}
+            {todayInfo && todayInfo.slots.length > 1 && (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+                {todayInfo.slots.map(s => {
+                  const active = sameSlot(s, slotRef)
+                  const open = now >= new Date(s.checkin_opens_at) && now < new Date(s.event_time)
+                  return (
+                    <button
+                      key={`${s.boss_date}|${s.boss_name}`}
+                      type="button"
+                      className={active ? 'btn btn-primary' : 'btn btn-ghost'}
+                      style={{ fontSize: 12, padding: '6px 12px' }}
+                      onClick={() => selectSlot({ boss_date: s.boss_date, boss_name: s.boss_name })}
+                    >
+                      {s.emoji} {DAY_SHORT[s.weekday]} {fmtTime(s.event_time)} — {s.boss_name}
+                      {open && <span style={{ marginLeft: 6, fontSize: 10 }}>● check-in aberto</span>}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* ── Boss selecionado ── */}
+            {slot && todayInfo && (
               <div className="card" style={{
                 marginBottom: 16,
                 borderColor: isNear ? 'rgba(229,62,62,0.5)' : 'var(--border-accent)',
                 background: isNear ? 'rgba(229,62,62,0.04)' : 'rgba(201,168,76,0.03)',
               }}>
                 <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <div style={{ fontSize: 56 }}>{todayInfo.emoji}</div>
+                  <div style={{ fontSize: 56 }}>{slot.emoji}</div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase',
                       letterSpacing: 2, marginBottom: 4 }}>
-                      Boss de hoje — 20:30
+                      {slot.boss_date === todayInfo.server_now.slice(0, 10) ? 'Boss de hoje' : 'Próximo boss'}
+                      {' — '}{DAY_FULL[slot.weekday]} {fmtTime(slot.event_time)}
                     </div>
                     <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 900,
-                      color: 'var(--accent)', marginBottom: todayMap ? 4 : 8 }}>
-                      {todayInfo.boss_name}
+                      color: 'var(--accent)', marginBottom: slotInfo ? 4 : 8 }}>
+                      {slot.boss_name}
                     </div>
-                    {todayMap && (
+                    {slotInfo && (
                       <button
                         type="button"
-                        onClick={() => openMapModal(todayInfo.boss_name, todayMap, todayMapImage)}
+                        onClick={() => openMapModal(slot.boss_name, slotInfo.map, slotInfo.mapImage)}
                         style={{
                           display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8,
                           background: 'none', border: 'none', padding: 0,
-                          cursor: todayMapImage ? 'pointer' : 'default',
+                          cursor: 'pointer',
                           textDecoration: 'none', textAlign: 'left',
                           transition: 'color 0.15s',
                         }}
-                        onMouseEnter={e => { if (todayMapImage) e.currentTarget.style.color = 'var(--accent)' }}
+                        onMouseEnter={e => { e.currentTarget.style.color = 'var(--accent)' }}
                         onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-secondary)' }}
                       >
-                        Mapa: {todayMap}
+                        Mapa: {slotInfo.map}
                       </button>
                     )}
 
@@ -240,13 +339,15 @@ export function WorldBoss() {
                         {isNear && <span style={{ color: 'var(--red)', fontWeight: 700, fontSize: 12 }}>⚠️ QUASE NA HORA!</span>}
                       </div>
                     ) : (
-                      <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Boss já iniciou hoje às 20:30.</span>
+                      <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                        Boss iniciado em {fmtDayTime(slot.event_time)}.
+                      </span>
                     )}
                   </div>
 
                   {/* Check-in */}
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-                    {todayInfo.checkin_open ? (
+                    {checkinOpen ? (
                       myCheckedIn ? (
                         <>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6,
@@ -266,8 +367,16 @@ export function WorldBoss() {
                       )
                     ) : (
                       <div style={{ textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>
-                        Check-in encerrado<br />
-                        <span style={{ fontSize: 11 }}>(abre meia-noite de cada dia)</span>
+                        {isOver ? (
+                          'Check-in encerrado'
+                        ) : (
+                          <>
+                            Check-in ainda não abriu<br />
+                            <span style={{ fontSize: 11 }}>
+                              (abre {opensDate ? fmtDayTime(opensDate.toISOString()) : ''})
+                            </span>
+                          </>
+                        )}
                       </div>
                     )}
                     <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
@@ -276,58 +385,62 @@ export function WorldBoss() {
                   </div>
                 </div>
               </div>
-            ) : (
-              <div className="card" style={{ textAlign: 'center', padding: '40px 24px', marginBottom: 16 }}>
-                <div style={{ fontSize: 48, marginBottom: 8 }}>😴</div>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700,
-                  color: 'var(--text-secondary)' }}>
-                  Sexta-feira — Dia de Descanso
-                </div>
-                <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 8 }}>
-                  Não há World Boss hoje. Aproveite para descansar!
-                </div>
-              </div>
             )}
 
             {/* ── Escala semanal ── */}
             <div className="card" style={{ marginBottom: 16 }}>
               <div className="card-header">
-                <span className="card-title">Escala Semanal — 20:30</span>
+                <span className="card-title">Escala Semanal (horário de Brasília)</span>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 8 }}>
                 {SCHEDULE.map(s => {
-                  const isToday = todayInfo?.weekday === s.weekday
+                  const isToday = todayInfo?.today_weekday === s.weekday
                   return (
                     <div key={s.day} style={{
                       textAlign: 'center', padding: '10px 4px', borderRadius: 8,
                       background: isToday ? 'rgba(201,168,76,0.1)' : 'var(--bg-700)',
                       border: `1px solid ${isToday ? 'var(--border-accent)' : 'var(--border)'}`,
                     }}>
-                      <div style={{ fontSize: 18, marginBottom: 4 }}>{s.emoji}</div>
-                      <div style={{ fontSize: 11, fontWeight: 700,
+                      <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6,
                         color: isToday ? 'var(--accent)' : 'var(--text-muted)',
                         textTransform: 'uppercase', letterSpacing: 0.5 }}>
                         {s.day}
                       </div>
-                      <div style={{ fontSize: 11, color: s.boss ? 'var(--text-secondary)' : 'var(--text-muted)',
-                        marginTop: 2, fontWeight: s.boss ? 600 : 400 }}>
-                        {s.boss ?? 'Off'}
-                      </div>
-                      {s.map && (
-                        <button
-                          type="button"
-                          onClick={() => openMapModal(s.boss, s.map, s.mapImage)}
-                          style={{
-                            display: 'block', width: '100%', fontSize: 10, color: 'var(--text-muted)',
-                            marginTop: 3, lineHeight: 1.3, background: 'none', border: 'none',
-                            padding: 0, cursor: s.mapImage ? 'pointer' : 'default',
-                            textDecoration: 'none', transition: 'color 0.15s',
-                          }}
-                          onMouseEnter={e => { if (s.mapImage) e.currentTarget.style.color = 'var(--accent)' }}
-                          onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)' }}
-                        >
-                          {s.map}
-                        </button>
+                      {s.slots.length === 0 ? (
+                        <>
+                          <div style={{ fontSize: 18, marginBottom: 4 }}>{s.restEmoji}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.rest}</div>
+                        </>
+                      ) : (
+                        s.slots.map(sl => {
+                          const info = BOSS_INFO[sl.boss]
+                          return (
+                            <div key={sl.time} style={{ marginBottom: 6 }}>
+                              <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600 }}>
+                                {info?.emoji} {sl.time}
+                              </div>
+                              <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600 }}>
+                                {sl.boss}
+                              </div>
+                              {info && (
+                                <button
+                                  type="button"
+                                  onClick={() => openMapModal(sl.boss, info.map, info.mapImage)}
+                                  style={{
+                                    display: 'block', width: '100%', fontSize: 10, color: 'var(--text-muted)',
+                                    marginTop: 2, lineHeight: 1.3, background: 'none', border: 'none',
+                                    padding: 0, cursor: 'pointer',
+                                    textDecoration: 'none', transition: 'color 0.15s',
+                                  }}
+                                  onMouseEnter={e => { e.currentTarget.style.color = 'var(--accent)' }}
+                                  onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)' }}
+                                >
+                                  {info.map}
+                                </button>
+                              )}
+                            </div>
+                          )
+                        })
                       )}
                     </div>
                   )
@@ -339,7 +452,7 @@ export function WorldBoss() {
             {checkins.length > 0 && (
               <div className="card" style={{ marginBottom: 16 }}>
                 <div className="card-header">
-                  <span className="card-title">Confirmados para hoje ({checkins.length})</span>
+                  <span className="card-title">Confirmados — {slotLabel} ({checkins.length})</span>
                 </div>
                 <div className="table-wrap">
                   <table>
@@ -381,7 +494,7 @@ export function WorldBoss() {
             {savedParties.length > 0 && savedParties.some(p => p.members.length > 0) && (
               <div className="card" style={{ marginBottom: 16 }}>
                 <div className="card-header">
-                  <span className="card-title">Partys Montadas</span>
+                  <span className="card-title">Partys Montadas — {slotLabel}</span>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
                   {savedParties.filter(p => p.members.length > 0).map(pt => (
@@ -415,7 +528,7 @@ export function WorldBoss() {
             {isStaff && checkins.length > 0 && (
               <div className="card">
                 <div className="card-header">
-                  <span className="card-title">⚙️ Montar Partys (Staff)</span>
+                  <span className="card-title">⚙️ Montar Partys (Staff) — {slotLabel}</span>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button className="btn btn-ghost" style={{ fontSize: 12, padding: '4px 10px' }}
                       onClick={() => {

@@ -122,14 +122,18 @@ export const api = {
 
   // World Boss
   getWorldBossToday: () => apiFetch<WorldBossToday>('/api/worldboss/today'),
-  worldBossCheckin: () => apiFetch<{ ok: boolean; already_checked_in: boolean }>('/api/worldboss/checkin', { method: 'POST' }),
-  worldBossCancelCheckin: () => apiFetch('/api/worldboss/checkin', { method: 'DELETE' }),
-  getWorldBossCheckins: (date?: string) =>
-    apiFetch<WorldBossCheckin[]>(`/api/worldboss/checkins${date ? `?date=${date}` : ''}`),
-  getWorldBossParties: (date?: string) =>
-    apiFetch<WorldBossPartiesData>(`/api/worldboss/parties${date ? `?date=${date}` : ''}`),
-  saveWorldBossParties: (parties: WorldBossParty[]) =>
-    apiFetch('/api/worldboss/parties', { method: 'PUT', body: JSON.stringify({ parties }) }),
+  worldBossCheckin: (slot: WorldBossSlotRef) =>
+    apiFetch<{ ok: boolean; already_checked_in: boolean }>('/api/worldboss/checkin', {
+      method: 'POST', body: JSON.stringify(slot),
+    }),
+  worldBossCancelCheckin: (slot: WorldBossSlotRef) =>
+    apiFetch('/api/worldboss/checkin', { method: 'DELETE', body: JSON.stringify(slot) }),
+  getWorldBossCheckins: (slot: WorldBossSlotRef) =>
+    apiFetch<WorldBossCheckin[]>(`/api/worldboss/checkins?${slotQuery(slot)}`),
+  getWorldBossParties: (slot: WorldBossSlotRef) =>
+    apiFetch<WorldBossPartiesData>(`/api/worldboss/parties?${slotQuery(slot)}`),
+  saveWorldBossParties: (slot: WorldBossSlotRef, parties: WorldBossParty[]) =>
+    apiFetch('/api/worldboss/parties', { method: 'PUT', body: JSON.stringify({ ...slot, parties }) }),
 
   // Perfil / aprovação — passam pelo backend com JWT Supabase
   getMyProfile: () => apiFetch<ProfileData>('/api/profile/me'),
@@ -281,13 +285,29 @@ export interface RaffleHistoryEntry {
   created_at: string
 }
 
-export interface WorldBossToday {
-  boss_name: string | null
+export interface WorldBossSlotRef {
   boss_date: string
-  emoji: string | null
-  event_time: string
-  checkin_open: boolean
+  boss_name: string
+}
+
+function slotQuery(slot: WorldBossSlotRef): string {
+  return new URLSearchParams({ date: slot.boss_date, boss: slot.boss_name }).toString()
+}
+
+export interface WorldBossSlot extends WorldBossSlotRef {
   weekday: number
+  emoji: string
+  event_time: string
+  checkin_opens_at: string
+  checkin_open: boolean
+  started: boolean
+}
+
+export interface WorldBossToday extends WorldBossSlot {
+  today_weekday: number
+  rest_reason: string | null
+  server_now: string
+  slots: WorldBossSlot[]
 }
 
 export interface WorldBossCheckin {
@@ -349,11 +369,15 @@ export interface WorldBossReportMember {
   nick_mudomix: string
   char_class: string
   total: number
-  attended_days: string[]
+  attended_slots: string[]
+}
+
+export interface WorldBossReportSlot extends WorldBossSlotRef {
+  key: string
 }
 
 export interface WorldBossReport {
-  days: string[]
+  slots: WorldBossReportSlot[]
   members: WorldBossReportMember[]
   range_start: string
   range_end: string

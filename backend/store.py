@@ -253,8 +253,8 @@ def insert_wb_checkin(
 ) -> bool:
     db.ensure_app_user(user_id)
     exists = db.fetch_one(
-        "SELECT 1 AS x FROM dbo.world_boss_checkins WHERE user_id = ? AND boss_date = ?",
-        [user_id, boss_date],
+        "SELECT 1 AS x FROM dbo.world_boss_checkins WHERE user_id = ? AND boss_date = ? AND boss_name = ?",
+        [user_id, boss_date, boss_name],
     )
     if exists:
         return False
@@ -269,22 +269,32 @@ def insert_wb_checkin(
     return True
 
 
-def delete_wb_checkin(user_id: str, boss_date: str) -> None:
+def delete_wb_checkin(user_id: str, boss_date: str, boss_name: str) -> None:
     db.execute(
-        "DELETE FROM dbo.world_boss_checkins WHERE user_id = ? AND boss_date = ?",
-        [user_id, boss_date],
+        "DELETE FROM dbo.world_boss_checkins WHERE user_id = ? AND boss_date = ? AND boss_name = ?",
+        [user_id, boss_date, boss_name],
     )
 
 
-def list_wb_checkins(boss_date: str) -> list[dict]:
+def list_wb_checkins(boss_date: str, boss_name: Optional[str] = None) -> list[dict]:
+    if boss_name is None:
+        return db.fetch_all(
+            """
+            SELECT id, nick_mudomix, guild, char_class, boss_name, created_at
+            FROM dbo.world_boss_checkins
+            WHERE boss_date = ?
+            ORDER BY created_at ASC
+            """,
+            [boss_date],
+        )
     return db.fetch_all(
         """
         SELECT id, nick_mudomix, guild, char_class, boss_name, created_at
         FROM dbo.world_boss_checkins
-        WHERE boss_date = ?
+        WHERE boss_date = ? AND boss_name = ?
         ORDER BY created_at ASC
         """,
-        [boss_date],
+        [boss_date, boss_name],
     )
 
 
@@ -308,17 +318,17 @@ def upsert_wb_parties(
 ) -> None:
     parties_json = json.dumps(parties_list, ensure_ascii=False)
     existing = db.fetch_one(
-        "SELECT id FROM dbo.world_boss_parties WHERE boss_date = ?",
-        [boss_date],
+        "SELECT id FROM dbo.world_boss_parties WHERE boss_date = ? AND boss_name = ?",
+        [boss_date, boss_name],
     )
     if existing:
         db.execute(
             """
             UPDATE dbo.world_boss_parties
-            SET boss_name = ?, parties = ?, updated_by = ?, updated_at = SYSUTCDATETIME()
-            WHERE boss_date = ?
+            SET parties = ?, updated_by = ?, updated_at = SYSUTCDATETIME()
+            WHERE id = ?
             """,
-            [boss_name, parties_json, updated_by, boss_date],
+            [parties_json, updated_by, existing["id"]],
         )
     else:
         db.execute(
@@ -330,14 +340,14 @@ def upsert_wb_parties(
         )
 
 
-def get_wb_parties(boss_date: str) -> dict | None:
+def get_wb_parties(boss_date: str, boss_name: str) -> dict | None:
     return db.fetch_one(
         """
         SELECT parties, boss_name, updated_at
         FROM dbo.world_boss_parties
-        WHERE boss_date = ?
+        WHERE boss_date = ? AND boss_name = ?
         """,
-        [boss_date],
+        [boss_date, boss_name],
     )
 
 

@@ -139,7 +139,7 @@ BEGIN
     created_at   DATETIMEOFFSET NULL
                  CONSTRAINT DF_wb_checkins_created_at DEFAULT SYSUTCDATETIME(),
     char_class   NVARCHAR(100) NULL,
-    CONSTRAINT UQ_wb_checkins_user_date UNIQUE (user_id, boss_date)
+    CONSTRAINT UQ_wb_checkins_user_slot UNIQUE (user_id, boss_date, boss_name)
   );
 END
 GO
@@ -148,20 +148,24 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'idx_wb_checkins_date' AN
   CREATE INDEX idx_wb_checkins_date ON dbo.world_boss_checkins (boss_date);
 GO
 
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'idx_wb_checkins_slot' AND object_id = OBJECT_ID(N'dbo.world_boss_checkins'))
+  CREATE INDEX idx_wb_checkins_slot ON dbo.world_boss_checkins (boss_date, boss_name);
+GO
+
 IF OBJECT_ID(N'dbo.world_boss_parties', N'U') IS NULL
 BEGIN
   CREATE TABLE dbo.world_boss_parties (
     id         BIGINT IDENTITY(1,1) NOT NULL
                CONSTRAINT PK_world_boss_parties PRIMARY KEY,
-    boss_date  DATE NOT NULL
-               CONSTRAINT UQ_world_boss_parties_date UNIQUE,
+    boss_date  DATE NOT NULL,
     boss_name  NVARCHAR(100) NOT NULL,
     parties    NVARCHAR(MAX) NOT NULL
                CONSTRAINT DF_wb_parties_json DEFAULT N'[]'
                CONSTRAINT CK_wb_parties_json CHECK (ISJSON(parties) = 1),
     updated_by NVARCHAR(100) NULL,
     updated_at DATETIMEOFFSET NULL
-               CONSTRAINT DF_wb_parties_updated_at DEFAULT SYSUTCDATETIME()
+               CONSTRAINT DF_wb_parties_updated_at DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT UQ_wb_parties_slot UNIQUE (boss_date, boss_name)
   );
 END
 GO
